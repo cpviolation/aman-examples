@@ -1,0 +1,256 @@
+[project]
+name = "aman-examples"
+description = "Amplitude analysis examples with AmpForm and TensorWaves"
+requires-python = ">=3.12,<3.14"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Maurizio Martinelli" }]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Typing :: Typed",
+]
+dependencies = [
+    "ampform>=0.16",
+    "iminuit",
+    "numpy",
+    "particle",
+    "sympy>=1.12",
+    "tensorwaves[jax]>=0.4.17",
+]
+dynamic = ["version"]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[project.urls]
+Issues = "https://github.com/cpviolation/aman-examples/issues"
+Source = "https://github.com/cpviolation/aman-examples"
+
+[project.optional-dependencies]
+cuda = ["jax[cuda12]; sys_platform == 'linux'"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    { include-group = "doc" },
+    { include-group = "jupyter" },
+    { include-group = "test" },
+]
+doc = [
+    "myst-nb",
+    "sphinx-book-theme",
+    "sphinx-copybutton",
+    { include-group = "notebooks" },
+]
+jupyter = [
+    "jupyter-ruff",
+    "jupyterlab",
+    "jupyterlab-git",
+    "jupyterlab-lsp",
+    "jupyterlab-myst",
+    "jupyterlab-quickopen",
+    "python-lsp-server",
+    { include-group = "notebooks" },
+]
+notebooks = [
+    "matplotlib",
+    "uproot",
+]
+test = [
+    "pytest",
+    "pytest-xdist",
+    "uproot",
+]
+
+[build-system]
+requires = [
+    "setuptools>=61.2",
+    "setuptools_scm",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.compwa.policy]
+dev-python-version = "3.12"
+package-manager = "uv"
+repo-name = "aman-examples"
+repo-organization = "cpviolation"
+repo-title = "AmAn examples"
+
+[tool.compwa.policy.github]
+github-pages = true
+macos-python-version = "3.12"
+no-pypi = true
+
+[tool.compwa.policy.python]
+excluded-python-versions = ["3.14", "3.15"]  # no JAX wheels yet
+
+[tool.docstrfmt]
+docstring-trailing-line = false
+format-python-code-blocks = false
+
+[tool.pytest]
+addopts = ["--color=yes", "--durations=3", "--import-mode=importlib", "-m not slow"]
+markers = ["slow: marks tests as slow (select with '-m slow')"]
+minversion = "9.0"
+testpaths = ["tests"]
+
+[tool.ruff]
+preview = true
+show-fixes = true
+src = [
+    "src",
+    "tests",
+]
+extend-include = ["*.ipynb"]
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN",
+    "DOC",
+    "PTH",
+    "any-type",
+    "if-else-block-instead-of-if-exp",
+    "incorrect-blank-line-before-class",
+    "line-too-long",
+    "logging-f-string",
+    "missing-copyright-notice",
+    "missing-dashed-underline-after-section",
+    "missing-f-string-syntax",
+    "missing-section-name-colon",
+    "missing-trailing-comma",
+    "multi-line-summary-second-line",
+    "non-empty-init-module",
+    "pytest-fixture-incorrect-parentheses-style",
+    "read-whole-file",
+    "reimplemented-starmap",
+    "single-line-implicit-string-concatenation",
+    "too-many-arguments",
+    "undocumented-magic-method",
+    "undocumented-public-class",
+    "undocumented-public-function",
+    "undocumented-public-init",
+    "undocumented-public-method",
+    "unspecified-encoding",
+    "write-whole-file",
+]
+task-tags = ["cspell"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "D",
+    "T20",
+    "assert",
+    "boolean-type-hint-positional-argument",
+    "float-equality-comparison",
+    "implicit-namespace-package",
+    "import-private-name",
+    "magic-value-comparison",
+    "no-self-use",
+    "private-member-access",
+]
+"*.ipynb" = [
+    "C90",
+    "D",
+    "PLR09",
+    "T20",
+    "TC00",
+    "assert",
+    "global-statement",
+    "global-variable-not-assigned",
+    "magic-value-comparison",
+    "mixed-case-variable-in-global-scope",
+    "non-lowercase-variable-in-function",
+    "too-many-blank-lines",
+    "useless-expression",
+    "useless-semicolon",
+]
+"docs/*" = [
+    "assert",
+    "implicit-namespace-package",
+    "request-without-timeout",
+]
+"docs/conf.py" = [
+    "builtin-variable-shadowing",
+    "undocumented-public-module",
+]
+
+[tool.ruff.lint.pep8-naming]
+# physics notation
+extend-ignore-names = [
+    "F",
+    "Gamma0",
+    "J",
+    "L",
+    "R",
+    "dD",
+    "dR",
+    "mA",
+    "mB",
+    "mC",
+    "mD",
+    "mD0",
+    "phiF",
+    "phiR",
+    "sA",
+    "sA0",
+    "sAB",
+    "sAC",
+    "sBC",
+]
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
+known-first-party = ["aman_examples"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-builtins]
+ignorelist = ["display"]
+
+[tool.ruff.lint.flake8-comprehensions]
+allow-dict-calls-with-keyword-arguments = true
+
+[tool.setuptools]
+include-package-data = false
+package-dir = { "" = "src" }
+
+[tool.setuptools.package-data]
+aman_examples = ["py.typed", "data/*.txt"]
+
+[tool.setuptools.packages.find]
+namespaces = false
+where = ["src"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+version_file = "src/aman_examples/version.py"
+
+[tool.tombi.files]
+exclude = ["**/uv.lock"]
+
+[tool.tombi.format.rules]
+indent-width = 4
+line-width = 88
+
+[tool.tombi.lint.rules]
+key-empty = "off"
+
+[[tool.tombi.schemas]]
+root = "tool.compwa.policy"
+path = "https://raw.githubusercontent.com/ComPWA/policy/0.10.5/compwa-policy.schema.json"
+include = ["pyproject.toml"]
+
+[tool.uv]
+# only releases at least two weeks old
+exclude-newer = "2026-11-10T00:00:00Z"
