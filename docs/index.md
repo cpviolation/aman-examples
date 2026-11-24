@@ -11,5 +11,6 @@ AmpliTF and TFA2.
 
 belle-model
 toy-fit
+mixing
 api
 ```

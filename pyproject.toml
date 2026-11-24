@@ -20,6 +20,7 @@ dependencies = [
     "particle",
     "sympy>=1.12",
     "tensorwaves[jax]>=0.4.17",
+    "uproot",
 ]
 dynamic = ["version"]
 
@@ -384,7 +385,7 @@ include-package-data = false
 package-dir = { "" = "src" }
 
 [tool.setuptools.package-data]
-aman_examples = ["py.typed", "data/*.txt"]
+aman_examples = ["py.typed", "data/*.root", "data/*.txt"]
 
 [tool.setuptools.packages.find]
 namespaces = false
