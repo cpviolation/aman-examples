@@ -90,3 +90,35 @@ class DalitzPlotGenerator(DataGenerator):
             self.range_bc[1] - self.range_bc[0]
         )
         return box * float(np.mean(is_inside(x, y, *self.masses)))
+
+
+class DalitzDecayTimeGenerator(DataGenerator):
+    r"""Events uniform in the Dalitz plot, with decay times from :math:`e^{-t/\tau}/\tau`.
+
+    The decay times are *not* uniform: a rate used with these events, for toy generation
+    or for normalisation integrals, has to be divided by :math:`e^{-t/\tau}/\tau` (see
+    :func:`.time_evolution` with ``relative_to_decay=True``).
+
+    Args:
+        masses: :math:`(m_a, m_b, m_c, m_D)` in GeV.
+
+        tau: Lifetime, in the units of the decay time.
+
+        variables: Names of :math:`s_{ab}`, :math:`s_{bc}` and the decay time.
+    """
+
+    def __init__(
+        self,
+        masses: tuple[float, float, float, float],
+        tau: float = 1.0,
+        variables: tuple[str, str, str] = ("m2_kspim", "m2_kspip", "t"),
+    ) -> None:
+        self.dalitz = DalitzPlotGenerator(masses, variables[:2])
+        self.tau = float(tau)
+        self.variables = variables
+
+    def generate(self, size: int, rng: RealNumberGenerator) -> DataSample:
+        sample = dict(self.dalitz.generate(size, rng))
+        u = rng(size=size)
+        sample[self.variables[2]] = -self.tau * np.log1p(-u)
+        return sample

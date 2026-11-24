@@ -18,13 +18,16 @@ enforced by [ComPWA/policy](https://github.com/ComPWA/policy).
 |---|---|
 | `src/aman_examples/d02kspipi.py` | Belle 2018 model of D0 → KS π+ π− (BaBar 2008 parametrisation): Breit-Wigner, LASS and ππ K-matrix terms with Zemach spin factors |
 | `src/aman_examples/dynamics.py` | The lineshapes as AmpForm `@unevaluated` expressions; the 5×5 K-matrix inverse is evaluated numerically by the backend |
-| `src/aman_examples/phasespace.py` | Uniform Dalitz-plot sampling as a TensorWaves `DataGenerator` (no TensorFlow needed) |
+| `src/aman_examples/phasespace.py` | Uniform Dalitz-plot sampling (with exponential decay times for mixing) as TensorWaves `DataGenerator`s (no TensorFlow needed) |
+| `src/aman_examples/mixing.py` | D0–D0bar mixing: time-dependent rate in terms of the D0 and D0bar amplitudes, computed per event by a data transformer |
+| `src/aman_examples/acceptance.py` | Decay-time efficiency for toys |
+| `src/aman_examples/binflip.py` | BaBar 2008 equal-Δδ_D binning, bin-flip ratios R_b(t) and strong-phase parameters c_b, s_b |
 | `docs/belle-model.ipynb` | The model, its Dalitz plot and fit fractions |
 | `docs/toy-fit.ipynb` | Toy generation and a fit of all free couplings |
-| `tests/` | Term-by-term comparison with the Belle C++ code (agreement 1e-9) and with the binned Belle amplitude, and a toy fit |
+| `docs/mixing.ipynb` | Mixing toys with a decay-time acceptance, fit of x and y, bin-flip ratios and strong phases |
+| `tests/` | Term-by-term comparison with the Belle C++ code (agreement 1e-9) and with the binned Belle amplitude, the mixing rate against the mass-eigenstate evolution, toy fits of the couplings and of x, y |
 
-Still to come from tfa_examples: D0–D0bar mixing toys and decay-time acceptance, the
-bin-flip fitter, the strong-phase study and the D0 → K+ K− π+ π− AmpGen model.
+Still to come from tfa_examples: the D0 → K+ K− π+ π− model from AmpGen.
 
 ## Installation
 
