@@ -213,40 +213,51 @@ class MultiMesonPhaseSpaceFactor(sp.Expr):
         return sp.Piecewise((above, s > 1), (below, True))
 
 
-class FirstRowInverseProduct(NumPyPrintable):
-    r""":math:`\sum_j (M^{-1})_{0j} v_j` for an :math:`n \times n` matrix :math:`M`.
+class InverseRowProduct(NumPyPrintable):
+    r""":math:`\sum_j (M^{-1})_{rj} v_j` for an :math:`n \times n` matrix :math:`M`.
 
     A symbolic inverse of the 5x5 K-matrix propagator would be far too large, so the
     inverse is left to the numerical backend (``linalg.inv`` of NumPy or JAX). The
-    arguments are :math:`n`, then the :math:`n^2` entries of :math:`M` (row-major) and
-    the :math:`n` entries of :math:`v`; they may be scalars or arrays of events.
+    arguments are the row :math:`r`, :math:`n`, then the :math:`n^2` entries of
+    :math:`M` (row-major) and the :math:`n` entries of :math:`v`; they may be scalars or
+    arrays of events.
     """
 
     is_commutative = True
 
-    def __new__(cls, n: int, *entries: sp.Expr, **kwargs: Any) -> Self:
-        n = int(n)
+    def __new__(cls, row: int, n: int, *entries: sp.Expr, **kwargs: Any) -> Self:
+        row, n = int(row), int(n)
         if len(entries) != n * n + n:
             msg = f"Expected {n * n} matrix and {n} vector entries, got {len(entries)}"
             raise ValueError(msg)
-        return sp.Expr.__new__(cls, sp.Integer(n), *map(sp.sympify, entries), **kwargs)
+        if not 0 <= row < n:
+            msg = f"Row {row} outside a {n} x {n} matrix"
+            raise ValueError(msg)
+        args = (sp.Integer(row), sp.Integer(n), *map(sp.sympify, entries))
+        return sp.Expr.__new__(cls, *args, **kwargs)
+
+    @property
+    def row(self) -> int:
+        return int(self.args[0])
 
     @property
     def n(self) -> int:
-        return int(self.args[0])
+        return int(self.args[1])
 
     @property
     def matrix(self) -> sp.Matrix:
         n = self.n
-        return sp.Matrix(n, n, self.args[1 : 1 + n * n])
+        return sp.Matrix(n, n, self.args[2 : 2 + n * n])
 
     @property
     def vector(self) -> sp.Matrix:
-        return sp.Matrix(self.args[1 + self.n**2 :])
+        return sp.Matrix(self.args[2 + self.n**2 :])
 
     def _latex(self, printer: LatexPrinter, *args: Any) -> str:  # ruff: ignore[unused-method-argument]
         n = printer._print(self.n)  # ruff: ignore[private-member-access]
-        return Rf"\left[\mathbf{{M}}^{{-1}} \mathbf{{v}}\right]_0^{{({n})}}"
+        return (
+            Rf"\left[\mathbf{{M}}^{{-1}} \mathbf{{v}}\right]_{{{self.row}}}^{{({n})}}"
+        )
 
     def _numpycode(self, printer: NumPyPrinter, *args: Any) -> str:  # ruff: ignore[unused-method-argument]
         names = {"stack", "broadcast_arrays", "moveaxis", "reshape", "sum", "linalg"}
@@ -258,9 +269,9 @@ class FirstRowInverseProduct(NumPyPrintable):
             stacked = f"stack(broadcast_arrays({values}))"
             return f"moveaxis(reshape({stacked}, ({shape}, -1)), -1, 0)"
 
-        matrix = batch(self.args[1 : 1 + n * n], f"{n}, {n}")
-        vector = batch(self.args[1 + n * n :], f"{n}")
-        return f"sum(linalg.inv({matrix})[:, 0, :] * {vector}, axis=-1)"
+        matrix = batch(self.args[2 : 2 + n * n], f"{n}, {n}")
+        vector = batch(self.args[2 + n * n :], f"{n}")
+        return f"sum(linalg.inv({matrix})[:, {self.row}, :] * {vector}, axis=-1)"
 
 
 def kmatrix_amplitude(  # ruff: ignore[too-many-positional-arguments]
@@ -276,7 +287,7 @@ def kmatrix_amplitude(  # ruff: ignore[too-many-positional-arguments]
     sA: sp.Expr | float = 1,
     sA0: sp.Expr | float = -0.15,
     m_threshold: sp.Expr | float = 0.13957,
-) -> FirstRowInverseProduct:
+) -> InverseRowProduct:
     r""":math:`\pi\pi` S-wave K-matrix amplitude with the P-vector approximation.
 
     .. math::
@@ -324,4 +335,27 @@ def kmatrix_amplitude(  # ruff: ignore[too-many-positional-arguments]
         + f_prod[j] * (1 - s0_prod) / (s - s0_prod)
         for j in range(n)
     ]
-    return FirstRowInverseProduct(n, *matrix, *p_vector)
+    return InverseRowProduct(0, n, *matrix, *p_vector)
+
+
+class AbsSquared(NumPyPrintable):
+    r""":math:`|x|^2`, printed as ``abs(x)**2`` without SymPy manipulating it.
+
+    For a large expression :math:`x`, ``sp.Abs(x)**2`` is very slow to unfold and to
+    lambdify (SymPy queries the assumptions of the whole tree).
+    """
+
+    is_commutative = True
+    is_extended_real = True
+
+    def __new__(cls, x: sp.Expr, **kwargs: Any) -> Self:
+        return sp.Expr.__new__(cls, sp.sympify(x), **kwargs)
+
+    def _latex(self, printer: LatexPrinter, *args: Any) -> str:  # ruff: ignore[unused-method-argument]
+        x = printer._print(self.args[0])  # ruff: ignore[private-member-access]
+        return Rf"\left|{x}\right|^2"
+
+    def _numpycode(self, printer: NumPyPrinter, *args: Any) -> str:  # ruff: ignore[unused-method-argument]
+        printer.module_imports[printer._module].add("abs")  # ruff: ignore[private-member-access]
+        x = printer._print(self.args[0])  # ruff: ignore[private-member-access]
+        return f"abs({x})**2"

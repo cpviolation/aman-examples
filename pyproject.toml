@@ -112,6 +112,9 @@ format-python-code-blocks = false
 [tool.lychee]
 cache = true
 cache_exclude_status = "400.."
+exclude_path = [
+    "LICENSES"
+]  # verbatim licence texts; fsf.org refuses automated requests
 hidden = true
 include_fragments = "anchor-only"
 include_verbatim = true
@@ -305,6 +308,11 @@ ignore = [
 task-tags = ["cspell"]
 
 [tool.ruff.lint.per-file-ignores]
+"src/aman_examples/ampgen/covariant.py" = [
+    "invalid-argument-name",  # AmpGen's vertex names and arguments (S_VV_P(P, Q, V1, V2))
+    "invalid-function-name",
+    "unused-function-argument",
+]
 "tests/*" = [
     "D",
     "T20",
@@ -385,7 +393,7 @@ include-package-data = false
 package-dir = { "" = "src" }
 
 [tool.setuptools.package-data]
-aman_examples = ["py.typed", "data/*.root", "data/*.txt"]
+aman_examples = ["py.typed", "data/*.root", "data/*.txt", "data/ampgen/*"]
 
 [tool.setuptools.packages.find]
 namespaces = false
