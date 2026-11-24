@@ -5,27 +5,31 @@ import pytest
 import sympy as sp
 from tensorwaves.function.sympy import create_function
 
-from aman_examples.dynamics import BelleBreitWigner, FirstRowInverseProduct
+from aman_examples.dynamics import BelleBreitWigner, InverseRowProduct
 
 
+@pytest.mark.parametrize("row", [0, 2])
 @pytest.mark.parametrize("backend", ["numpy", "jax"])
-def test_first_row_inverse_product(backend):
+def test_inverse_row_product(backend, row):
     x = sp.Symbol("x", real=True)
     matrix = [2 + x, sp.I, 0, 1, 3 * x, x**2, sp.Rational(1, 2), 0, 4]
     vector = [1 + x, 2, sp.I * x]
-    expr = FirstRowInverseProduct(3, *matrix, *vector)
+    expr = InverseRowProduct(row, 3, *matrix, *vector)
     assert expr.func(*expr.args) == expr  # rebuilt by doit() and substitutions
     xs = np.linspace(0.5, 2.0, 7)
     function = create_function(expr, backend=backend)
     expected = [
         np.linalg.inv(
             np.array([complex(sp.sympify(m).subs(x, t)) for m in matrix]).reshape(3, 3)
-        )[0]
+        )[row]
         @ np.array([complex(sp.sympify(v).subs(x, t)) for v in vector])
         for t in xs
     ]
     np.testing.assert_allclose(np.asarray(function({"x": xs})), expected, rtol=1e-12)
-    assert sp.latex(expr) == R"\left[\mathbf{M}^{-1} \mathbf{v}\right]_0^{(3)}"
+    assert (
+        sp.latex(expr)
+        == Rf"\left[\mathbf{{M}}^{{-1}} \mathbf{{v}}\right]_{{{row}}}^{{(3)}}"
+    )
 
 
 def test_breit_wigner_at_pole():
