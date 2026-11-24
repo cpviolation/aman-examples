@@ -21,6 +21,7 @@ enforced by [ComPWA/policy](https://github.com/ComPWA/policy).
 | `src/aman_examples/phasespace.py` | Uniform Dalitz-plot sampling (with exponential decay times for mixing) as TensorWaves `DataGenerator`s (no TensorFlow needed) |
 | `src/aman_examples/mixing.py` | D0–D0bar mixing: time-dependent rate in terms of the D0 and D0bar amplitudes, computed per event by a data transformer |
 | `src/aman_examples/acceptance.py` | Acceptance models in (m²(K⁰ₛπ∓), m²(π⁺π⁻), t, cos θ_hel): functions, 1–3D histograms and their products, and the ROOT files of the `EfficiencyModel` of d02kspipi_toys |
+| `src/aman_examples/parametric_acceptance.py` | Parametric acceptance in (s+, s0, t): logistic of a free set of monomials in Dalitz-plot and time features, times a decay-time turn-on; the v4 model of d02kspipi_run3; fit to simulated samples |
 | `src/aman_examples/binflip.py` | BaBar 2008 equal-Δδ_D binning, bin-flip ratios R_b(t) and strong-phase parameters c_b, s_b |
 | `src/aman_examples/ampgen/` | Models from AmpGen options files: parsing, AmpGen's daughter ordering and orbital rules, covariant spin factors and AmpGen's lineshapes (Breit-Wigner, Gounaris-Sakurai, Flatté, FOCUS, K-matrix, spline running widths) |
 | `src/aman_examples/d02kkpipi.py` | The LHCb D0 → K+ K− π+ π− model (AmpGen `DtoKKpipi_v2.opt`, 55 decay chains) and four-body phase space |
