@@ -231,8 +231,8 @@ env = { UV_PYTHON = "3.13" }
 ref = "test"
 
 [tool.poe.tasks.style]
-cmd = "prek run --all-files"
-executor = { group = "style" }
+cmd = "uvx prek run --all-files"
+executor = { type = "simple" }
 help = "Perform all linting, formatting, and spelling checks"
 
 [tool.poe.tasks.upgrade]
