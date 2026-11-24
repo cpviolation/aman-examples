@@ -63,6 +63,7 @@ notebooks = [
 ]
 test = [
     "pytest",
+    "pytest-cov",
     "pytest-xdist",
     "uproot",
 ]
@@ -89,9 +90,166 @@ no-pypi = true
 [tool.compwa.policy.python]
 excluded-python-versions = ["3.14", "3.15"]  # no JAX wheels yet
 
+[tool.coverage.run]
+branch = true
+omit = [
+    "benchmarks/**/*.py",
+    "docs/**/*.ipynb",
+    "docs/**/*.py",
+    "examples/**/*.py",
+    "tests/**/*.py",
+]
+source = ["src"]
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:"]
+
 [tool.docstrfmt]
 docstring-trailing-line = false
 format-python-code-blocks = false
+
+[tool.lychee]
+cache = true
+cache_exclude_status = "400.."
+hidden = true
+include_fragments = "anchor-only"
+include_verbatim = true
+max_cache_age = "7d"
+
+[tool.poe.executor]
+isolated = true
+no-group = "dev"
+type = "uv"
+
+[tool.poe.groups.doc]
+heading = "Documentation"
+
+[tool.poe.groups.doc.tasks.doc]
+cmd = """
+sphinx-build \
+    --builder=html \
+    --fail-on-warning \
+    --keep-going \
+    --show-traceback \
+    docs/ \
+    docs/_build/html/
+"""
+env = { PYTHONWARNINGS = "" }
+executor = { group = "doc" }
+help = "Build documentation and API"
+
+[tool.poe.groups.doc.tasks.doclive]
+cmd = """
+sphinx-autobuild \
+    --builder=html \
+    --port=0 \
+    --re-ignore=/__pycache__(/.*)?$ \
+    --re-ignore=/_build(/.*)?$ \
+    --re-ignore=/\\.ipynb_checkpoints(/.*)?$ \
+    --re-ignore=/version\\.py$ \
+    --watch=src \
+    docs/ \
+    docs/_build/html/
+"""
+executor = { group = "doc", with = "sphinx-autobuild" }
+help = "Set up a server to directly preview changes to the HTML pages"
+
+[tool.poe.groups.doc.tasks.docnb]
+env = { EXECUTE_NB = "yes" }
+help = "Build documentation and API with cached notebook execution"
+sequence = ["doc"]
+
+[tool.poe.groups.doc.tasks.docnblive]
+env = { EXECUTE_NB = "yes" }
+help = "Set up a server to directly preview changes to the HTML pages with cached notebook execution"
+sequence = ["doclive"]
+
+[tool.poe.groups.doc.tasks.linkcheck]
+cmd = "uvx --from lychee-bin lychee . --quiet"
+executor = { type = "simple" }
+help = "Check links in repository sources (requires internet connection)"
+
+[tool.poe.groups.notebook]
+heading = "Notebooks"
+
+[tool.poe.groups.notebook.tasks.lab]
+args = [{ name = "paths", default = "", positional = true }]
+cmd = "jupyter lab ${paths}"
+executor = { group = "jupyter" }
+help = "Launch Jupyter Lab"
+
+[tool.poe.groups.notebook.tasks.nb]
+args = [{ name = "paths", default = "docs", multiple = true, positional = true }]
+cmd = "pytest --nbmake --nbmake-timeout=0 ${paths}"
+executor = { group = "notebooks", with = "nbmake" }
+help = "Run all notebooks"
+
+[tool.poe.groups.test]
+heading = "Testing"
+
+[tool.poe.groups.test.tasks.cov]
+cmd = "pytest --cov=aman_examples --cov-report=html --cov-report=xml --numprocesses=auto ${paths}"
+executor = { group = "test" }
+help = "Compute how much of the source code is covered by tests"
+
+[[tool.poe.groups.test.tasks.cov.args]]
+default = "tests"
+multiple = true
+name = "paths"
+positional = true
+
+[tool.poe.groups.test.tasks.test]
+cmd = "pytest -m 'slow or not slow' --numprocesses=auto ${paths}"
+executor = { group = "test" }
+help = "Run all unit tests"
+
+[[tool.poe.groups.test.tasks.test.args]]
+default = "tests"
+multiple = true
+name = "paths"
+positional = true
+
+[tool.poe.groups.test.tasks.test-all]
+help = "Run all tests on each supported Python version"
+sequence = [
+    "test-py312 ${paths}",
+    "test-py313 ${paths}",
+]
+
+[[tool.poe.groups.test.tasks.test-all.args]]
+default = ""
+multiple = true
+name = "paths"
+positional = true
+
+[tool.poe.groups.test.tasks.test-py312]
+env = { UV_PYTHON = "3.12" }
+ref = "test"
+
+[tool.poe.groups.test.tasks.test-py313]
+env = { UV_PYTHON = "3.13" }
+ref = "test"
+
+[tool.poe.tasks.style]
+cmd = "uvx prek run --all-files"
+executor = { type = "simple" }
+help = "Perform all linting, formatting, and spelling checks"
+
+[tool.poe.tasks.upgrade]
+executor = { type = "simple" }
+help = "Upgrade lock files"
+parallel = [
+    "_upgrade-precommit",
+    "_upgrade-uv",
+]
+
+[tool.poe.tasks._upgrade-precommit]
+cmd = "prek autoupdate"
+executor = { type = "simple" }
+
+[tool.poe.tasks._upgrade-uv]
+cmd = "uv lock --upgrade"
+executor = { type = "simple" }
 
 [tool.pytest]
 addopts = ["--color=yes", "--durations=3", "--import-mode=importlib", "-m not slow"]
