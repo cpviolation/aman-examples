@@ -105,6 +105,9 @@ class DalitzDecayTimeGenerator(DataGenerator):
         tau: Lifetime, in the units of the decay time.
 
         variables: Names of :math:`s_{ab}`, :math:`s_{bc}` and the decay time.
+
+        time_range: Restrict the decay times to [``t_min``, ``t_max``) (truncated
+            exponential); unrestricted by default.
     """
 
     def __init__(
@@ -112,15 +115,23 @@ class DalitzDecayTimeGenerator(DataGenerator):
         masses: tuple[float, float, float, float],
         tau: float = 1.0,
         variables: tuple[str, str, str] = ("m2_kspim", "m2_kspip", "t"),
+        time_range: tuple[float, float] = (0.0, np.inf),
     ) -> None:
         self.dalitz = DalitzPlotGenerator(masses, variables[:2])
         self.tau = float(tau)
         self.variables = variables
+        self.time_range = (float(time_range[0]), float(time_range[1]))
+        if not 0 <= self.time_range[0] < self.time_range[1]:
+            msg = f"Invalid decay-time range {time_range}"
+            raise ValueError(msg)
 
     def generate(self, size: int, rng: RealNumberGenerator) -> DataSample:
         sample = dict(self.dalitz.generate(size, rng))
+        t_min, t_max = self.time_range
+        # inverse of the cumulative distribution of the truncated exponential
+        fraction = -np.expm1(-(t_max - t_min) / self.tau)
         u = rng(size=size)
-        sample[self.variables[2]] = -self.tau * np.log1p(-u)
+        sample[self.variables[2]] = t_min - self.tau * np.log1p(-u * fraction)
         return sample
 
 

@@ -105,3 +105,50 @@ def test_fit_recovers_mixing_parameters(setup):
     for name, value in true.items():
         fitted, error = result.parameter_values[name], result.parameter_errors[name]
         assert abs(fitted - value) < 5 * error, (name, fitted, error)
+
+
+def correlated_acceptance():
+    """A 3D acceptance with a correlation between m2(pi+ pi-), |cos theta| and t, binned as from simulation, times a decay-time turn-on."""
+    from aman_examples.acceptance import (  # ruff: ignore[import-outside-top-level]
+        FunctionAcceptance,
+        HistogramAcceptance,
+        decay_time_acceptance,
+    )
+
+    edges = [
+        np.linspace(0.0, 3.0, 31),
+        np.linspace(0.0, 10.0, 21),
+        np.linspace(0.0, 1.0, 11),
+    ]
+    centers = np.meshgrid(*((e[1:] + e[:-1]) / 2 for e in edges), indexing="ij")
+    m2_pipi, t, abs_cos = centers
+    values = (1 - 0.3 * m2_pipi / 3) * (1 - 0.5 * abs_cos**2 * np.exp(-t))
+    correlation = HistogramAcceptance(values, edges, ("m2_pipi", "t", "abs_cos_hel"))
+    dalitz = FunctionAcceptance(lambda m2_kspim: 1 - 0.1 * m2_kspim, ("m2_kspim",))
+    return (
+        correlation * dalitz * decay_time_acceptance(t0=0.2, a=2.0, b=0.3, m=1.0, n=2.0)
+    )
+
+
+def test_fit_with_3d_acceptance(setup):
+    from aman_examples.acceptance import apply_efficiency  # ruff: ignore[import-outside-top-level]
+
+    generator, transformer, function = setup
+    true = {"x": 0.05, "y": 0.05}
+    function.update_parameters(true)
+    rng = NumpyUniformRNG(seed=5)
+    acceptance = correlated_acceptance()
+    data = IntensityDistributionGenerator(
+        generator, function, domain_transformer=transformer, bunch_size=200_000
+    ).generate(80_000, rng)
+    data = apply_efficiency(data, acceptance(data), rng=1)
+    phsp = generator.generate(1_500_000, rng)
+    phsp = apply_efficiency(phsp, acceptance(phsp), rng=2)
+    estimator = UnbinnedNLL(
+        function, transformer(data), transformer(phsp), backend="jax"
+    )
+    result = Minuit2().optimize(estimator, {"x": 0.0, "y": 0.0})
+    assert result.minimum_valid
+    for name, value in true.items():
+        fitted, error = result.parameter_values[name], result.parameter_errors[name]
+        assert abs(fitted - value) < 5 * error, (name, fitted, error)

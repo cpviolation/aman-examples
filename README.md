@@ -20,13 +20,15 @@ enforced by [ComPWA/policy](https://github.com/ComPWA/policy).
 | `src/aman_examples/dynamics.py` | The lineshapes as AmpForm `@unevaluated` expressions; the 5×5 K-matrix inverse is evaluated numerically by the backend |
 | `src/aman_examples/phasespace.py` | Uniform Dalitz-plot sampling (with exponential decay times for mixing) as TensorWaves `DataGenerator`s (no TensorFlow needed) |
 | `src/aman_examples/mixing.py` | D0–D0bar mixing: time-dependent rate in terms of the D0 and D0bar amplitudes, computed per event by a data transformer |
-| `src/aman_examples/acceptance.py` | Decay-time efficiency for toys |
+| `src/aman_examples/acceptance.py` | Acceptance models in (m²(K⁰ₛπ∓), m²(π⁺π⁻), t, cos θ_hel): functions, 1–3D histograms and their products, and the ROOT files of the `EfficiencyModel` of d02kspipi_toys |
+| `src/aman_examples/parametric_acceptance.py` | Parametric acceptance in (s+, s0, t): logistic of a free set of monomials in Dalitz-plot and time features, times a decay-time turn-on; the v4 model of d02kspipi_run3; fit to simulated samples |
 | `src/aman_examples/binflip.py` | BaBar 2008 equal-Δδ_D binning, bin-flip ratios R_b(t) and strong-phase parameters c_b, s_b |
 | `src/aman_examples/ampgen/` | Models from AmpGen options files: parsing, AmpGen's daughter ordering and orbital rules, covariant spin factors and AmpGen's lineshapes (Breit-Wigner, Gounaris-Sakurai, Flatté, FOCUS, K-matrix, spline running widths) |
 | `src/aman_examples/d02kkpipi.py` | The LHCb D0 → K+ K− π+ π− model (AmpGen `DtoKKpipi_v2.opt`, 55 decay chains) and four-body phase space |
 | `docs/belle-model.ipynb` | The model, its Dalitz plot and fit fractions |
 | `docs/toy-fit.ipynb` | Toy generation and a fit of all free couplings |
 | `docs/mixing.ipynb` | Mixing toys with a decay-time acceptance, fit of x and y, bin-flip ratios and strong phases |
+| `docs/acceptance.ipynb` | Mixing toys with a correlated 3D acceptance, and the fit of x and y with and without it |
 | `docs/d02kkpipi.ipynb` | The D0 → K+ K− π+ π− model and a toy fit of its 25 free couplings |
 | `tests/` | Term-by-term comparison with the Belle C++ code (agreement 1e-9) and with the binned Belle amplitude, every D0 → K+ K− π+ π− chain against AmpGen (1e-5), the mixing rate against the mass-eigenstate evolution, toy fits of the couplings and of x, y |
 
