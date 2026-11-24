@@ -27,7 +27,7 @@ enforced by [ComPWA/policy](https://github.com/ComPWA/policy).
 | `src/aman_examples/d02kkpipi.py` | The LHCb D0 → K+ K− π+ π− model (AmpGen `DtoKKpipi_v2.opt`, 55 decay chains) and four-body phase space |
 | `docs/belle-model.ipynb` | The model, its Dalitz plot and fit fractions |
 | `docs/toy-fit.ipynb` | Toy generation and a fit of all free couplings |
-| `docs/mixing.ipynb` | Mixing toys with a decay-time acceptance, fit of x and y, bin-flip ratios and strong phases |
+| `docs/mixing.ipynb` | Mixing toys with the parametric (v4) acceptance, fit of x and y, bin-flip ratios and strong phases |
 | `docs/acceptance.ipynb` | Mixing toys with a correlated 3D acceptance, and the fit of x and y with and without it |
 | `docs/d02kkpipi.ipynb` | The D0 → K+ K− π+ π− model and a toy fit of its 25 free couplings |
 | `tests/` | Term-by-term comparison with the Belle C++ code (agreement 1e-9) and with the binned Belle amplitude, every D0 → K+ K− π+ π− chain against AmpGen (1e-5), the mixing rate against the mass-eigenstate evolution, toy fits of the couplings and of x, y |
