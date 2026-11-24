@@ -112,6 +112,9 @@ format-python-code-blocks = false
 [tool.lychee]
 cache = true
 cache_exclude_status = "400.."
+exclude_path = [
+    "LICENSES"
+]  # verbatim licence texts; fsf.org refuses automated requests
 hidden = true
 include_fragments = "anchor-only"
 include_verbatim = true
