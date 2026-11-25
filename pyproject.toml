@@ -132,6 +132,7 @@ heading = "Documentation"
 cmd = """
 sphinx-build \
     --builder=html \
+    --jobs=auto \
     --fail-on-warning \
     --keep-going \
     --show-traceback \
