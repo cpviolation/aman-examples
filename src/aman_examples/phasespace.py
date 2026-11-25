@@ -249,3 +249,230 @@ class NBodyPhaseSpaceGenerator(DataGenerator):
             for i in range(len(self.masses))
             for j, c in enumerate(("x", "y", "z", "E"))
         }
+
+
+class PairPhaseSpaceGenerator(DataGenerator):
+    r"""Four-body phase space as :math:`D \to (12)(34)`, importance-sampled in the pair masses.
+
+    Uses :math:`d\Phi_4 \propto p^*\, p_{12}\, p_{34}\; dm_{12}\, dm_{34}\, d\Omega^*\,
+    d\Omega_{12}\, d\Omega_{34}`, with :math:`p^*` the momentum of the pairs in the
+    :math:`D` rest frame and :math:`p_{12}`, :math:`p_{34}` the momenta in the pair rest
+    frames. The pair masses are drawn from mixtures of a flat density and of Cauchy
+    (non-relativistic Breit-Wigner) densities centred on known narrow resonances, then
+    accepted with probability :math:`\propto p^*\, p_{12}\, p_{34}`, and the pairs decay
+    isotropically. The events are therefore distributed as phase space times
+    :meth:`density_ratio`, which is known for each event: to generate events from an
+    intensity :math:`I`, use :class:`ImportanceSampledFunction`, :math:`I/r`, which
+    peaks much less than :math:`I` when the resonances dominate the peaks of :math:`I`.
+
+    The sample has the same columns as :class:`NBodyPhaseSpaceGenerator` (``p<i>_x``,
+    ``p<i>_y``, ``p<i>_z``, ``p<i>_E``), in the order of ``masses``.
+
+    Args:
+        masses: Masses of the four final-state particles in GeV.
+
+        parent_mass: Mass of the decaying particle in GeV.
+
+        pairs: Indices of the particles of the two pairs.
+
+        peaks: For each pair, a sequence of ``(mass, width, fraction)``: a Cauchy density
+            of that mass and width (GeV) is mixed into the pair-mass density with that
+            fraction. The fractions of a pair sum to less than 1, the rest is flat.
+    """
+
+    def __init__(
+        self,
+        masses: tuple[float, float, float, float],
+        parent_mass: float,
+        pairs: tuple[tuple[int, int], tuple[int, int]] = ((0, 1), (2, 3)),
+        peaks: tuple[
+            tuple[tuple[float, float, float], ...],
+            tuple[tuple[float, float, float], ...],
+        ] = ((), ()),
+    ) -> None:
+        self.masses = np.array(masses, dtype=float)
+        self.parent_mass = float(parent_mass)
+        self.pairs = pairs
+        if sorted(i for pair in pairs for i in pair) != [0, 1, 2, 3]:
+            msg = f"The pairs {pairs} are not a partition of the four particles"
+            raise ValueError(msg)
+        pair_masses = [self.masses[list(pair)].sum() for pair in pairs]
+        if self.parent_mass <= sum(pair_masses):
+            msg = "The decay is kinematically forbidden"
+            raise ValueError(msg)
+        self.ranges = [
+            (pair_masses[k], self.parent_mass - pair_masses[1 - k]) for k in range(2)
+        ]
+        self.peaks = [tuple(tuple(map(float, p)) for p in peaks[k]) for k in range(2)]
+        for k in range(2):
+            if sum(f for _, _, f in self.peaks[k]) >= 1:
+                msg = f"The peak fractions of pair {k} sum to 1 or more"
+                raise ValueError(msg)
+        # maximum of p* p12 p34 on a grid (smooth, zero on the boundary)
+        grid = [np.linspace(*r, 401) for r in self.ranges]
+        m12, m34 = np.meshgrid(*grid, indexing="ij")
+        self.max_weight = 1.02 * float(self._phase_space_weight(m12, m34).max())
+        # the accept-reject on p* p12 p34 changes the normalisation of the product of
+        # the pair-mass densities: phase-space average of that product, by quadrature
+        nodes = [self._quadrature_nodes(k) for k in range(2)]
+        m12, m34 = np.meshgrid(*nodes, indexing="ij")
+        weight = self._phase_space_weight(m12, m34)
+        product = self._pair_density(0, m12) * self._pair_density(1, m34)
+        self._normalisation = 1 / (
+            np.trapezoid(np.trapezoid(weight * product, nodes[1]), nodes[0])
+            / np.trapezoid(np.trapezoid(weight, nodes[1]), nodes[0])
+        )
+
+    def _quadrature_nodes(self, k: int) -> np.ndarray:
+        lo, hi = self.ranges[k]
+        nodes = [np.linspace(lo, hi, 2001)]
+        for mass, width, _ in self.peaks[k]:
+            nodes.append(np.linspace(mass - 30 * width, mass + 30 * width, 1201))
+        nodes_array = np.unique(np.concatenate(nodes))
+        return nodes_array[(nodes_array >= lo) & (nodes_array <= hi)]
+
+    def _phase_space_weight(self, m12: np.ndarray, m34: np.ndarray) -> np.ndarray:
+        (a, b), (c, d) = self.pairs
+        p_star = _breakup_momentum(
+            np.broadcast_to(self.parent_mass, np.shape(m12)), m12, m34
+        )
+        p12 = _breakup_momentum(
+            m12, np.full(np.shape(m12), self.masses[a]), self.masses[b]
+        )
+        p34 = _breakup_momentum(
+            m34, np.full(np.shape(m34), self.masses[c]), self.masses[d]
+        )
+        return np.where(m12 + m34 < self.parent_mass, p_star * p12 * p34, 0.0)
+
+    def _cauchy_bounds(self, k: int, mass: float, width: float) -> tuple[float, float]:
+        lo, hi = self.ranges[k]
+        return np.arctan((lo - mass) / (width / 2)), np.arctan(
+            (hi - mass) / (width / 2)
+        )
+
+    def _pair_density(self, k: int, m: np.ndarray) -> np.ndarray:
+        """Density of the proposal for the mass of pair ``k``, relative to flat."""
+        lo, hi = self.ranges[k]
+        ratio = 1 - sum(f for _, _, f in self.peaks[k]) + 0 * m
+        for mass, width, fraction in self.peaks[k]:
+            a, b = self._cauchy_bounds(k, mass, width)
+            cauchy = (width / 2) / ((m - mass) ** 2 + (width / 2) ** 2) / (b - a)
+            ratio += fraction * (hi - lo) * cauchy
+        return ratio
+
+    def _sample_pair_mass(
+        self, k: int, size: int, rng: RealNumberGenerator
+    ) -> np.ndarray:
+        lo, hi = self.ranges[k]
+        m = rng(size=size, min_value=lo, max_value=hi)
+        choice = rng(size=size)
+        u = rng(size=size)
+        edge = 0.0
+        for mass, width, fraction in self.peaks[k]:
+            a, b = self._cauchy_bounds(k, mass, width)
+            selected = (choice >= edge) & (choice < edge + fraction)
+            m = np.where(selected, mass + width / 2 * np.tan(a + u * (b - a)), m)
+            edge += fraction
+        return m
+
+    def density_ratio(self, sample: DataSample) -> np.ndarray:
+        """Density of the generated events relative to phase space, per event.
+
+        Normalised so that its average over phase space is 1: the average of :math:`f/r`
+        over generated events estimates the phase-space average of :math:`f`.
+        """
+        return (
+            self._normalisation
+            * self._pair_density(0, self._pair_mass(sample, 0))
+            * self._pair_density(1, self._pair_mass(sample, 1))
+        )
+
+    def _pair_mass(self, sample: DataSample, k: int) -> np.ndarray:
+        p = sum(
+            np.column_stack([sample[f"p{i}_{c}"] for c in ("x", "y", "z", "E")])
+            for i in self.pairs[k]
+        )
+        return np.sqrt(np.clip(p[:, 3] ** 2 - np.sum(p[:, :3] ** 2, axis=1), 0, None))
+
+    def _decay(
+        self, m12: np.ndarray, m34: np.ndarray, rng: RealNumberGenerator
+    ) -> np.ndarray:
+        """Four-momenta (N, 4 particles, 4 components) for given pair masses."""
+        size = len(m12)
+
+        def isotropic(p: np.ndarray) -> np.ndarray:
+            cos_theta = 2 * rng(size=size) - 1
+            phi = 2 * np.pi * rng(size=size)
+            sin_theta = np.sqrt(1 - cos_theta**2)
+            return p[:, None] * np.column_stack([
+                sin_theta * np.cos(phi),
+                sin_theta * np.sin(phi),
+                cos_theta,
+            ])
+
+        momenta = np.empty((size, 4, 4))
+        p_star = isotropic(_breakup_momentum(np.full(size, self.parent_mass), m12, m34))
+        for (i, j), m, sign in ((self.pairs[0], m12, 1), (self.pairs[1], m34, -1)):
+            mi, mj = np.full(size, self.masses[i]), np.full(size, self.masses[j])
+            q = isotropic(_breakup_momentum(m, mi, mj))
+            beta = sign * p_star / np.sqrt(np.sum(p_star**2, axis=1) + m**2)[:, None]
+            momenta[:, i] = _boost(
+                np.column_stack([q, np.sqrt(np.sum(q**2, 1) + mi**2)]), beta
+            )
+            momenta[:, j] = _boost(
+                np.column_stack([-q, np.sqrt(np.sum(q**2, 1) + mj**2)]), beta
+            )
+        return momenta
+
+    def generate(self, size: int, rng: RealNumberGenerator) -> DataSample:
+        m12_list: list[np.ndarray] = []
+        m34_list: list[np.ndarray] = []
+        count = 0
+        while count < size:
+            n = 2 * (size - count) + 1000
+            m12 = self._sample_pair_mass(0, n, rng)
+            m34 = self._sample_pair_mass(1, n, rng)
+            keep = rng(size=n, max_value=self.max_weight) < self._phase_space_weight(
+                m12, m34
+            )
+            m12_list.append(m12[keep])
+            m34_list.append(m34[keep])
+            count += int(keep.sum())
+        m12 = np.concatenate(m12_list)[:size]
+        m34 = np.concatenate(m34_list)[:size]
+        momenta = self._decay(m12, m34, rng)
+        return {
+            f"p{i}_{c}": momenta[:, i, j]
+            for i in range(4)
+            for j, c in enumerate(("x", "y", "z", "E"))
+        }
+
+
+class ImportanceSampledFunction:
+    r"""Intensity divided by the density ratio of an importance-sampled domain generator.
+
+    For use with :class:`~tensorwaves.data.IntensityDistributionGenerator` and a
+    generator such as :class:`PairPhaseSpaceGenerator`, whose events are distributed as
+    phase space times :math:`r(x)`: accepting them with probability :math:`\propto
+    I(x)/r(x)` gives events distributed as :math:`I(x)` in phase space. The transformer,
+    if any, is applied here, so that :math:`r` is computed from the generated
+    four-momenta: pass no ``domain_transformer`` to the
+    `~tensorwaves.data.IntensityDistributionGenerator`.
+
+    Args:
+        function: The intensity.
+
+        generator: The domain generator, with a ``density_ratio(sample)`` method.
+
+        transformer: Optional transformation of the generated sample into the input of
+            ``function``.
+    """
+
+    def __init__(self, function, generator, transformer=None) -> None:
+        self.function = function
+        self.generator = generator
+        self.transformer = transformer
+
+    def __call__(self, data: DataSample) -> np.ndarray:
+        inputs = data if self.transformer is None else self.transformer(data)
+        return np.asarray(self.function(inputs)) / self.generator.density_ratio(data)

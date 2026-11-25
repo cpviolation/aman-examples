@@ -18,6 +18,7 @@ from tensorwaves.function.sympy import create_parametrized_function
 from aman_examples import d02kkpipi
 from aman_examples.ampgen.model import coupling_symbol
 from aman_examples.ampgen.options import parse_descriptor, read_options
+from aman_examples.phasespace import ImportanceSampledFunction
 
 REF = np.load(Path(__file__).parent / "data" / "ampgen_d02kkpipi_v2_reference.npz")
 REF_NAMES = list(REF["names"])
@@ -143,9 +144,10 @@ def test_small_fit(model):  # ruff: ignore[too-many-locals]
         expression, model.parameter_defaults, "jax"
     )
     generator = d02kkpipi.phase_space_generator(model)
+    peaked = d02kkpipi.peaked_phase_space_generator(model)
     rng = NumpyUniformRNG(seed=3)
     data = IntensityDistributionGenerator(
-        generator, intensity, bunch_size=100_000
+        peaked, ImportanceSampledFunction(intensity, peaked), bunch_size=100_000
     ).generate(5000, rng)
     phsp = generator.generate(200_000, rng)
     rules = [
