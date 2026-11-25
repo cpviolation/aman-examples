@@ -13,11 +13,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 from tensorwaves.data.rng import NumpyUniformRNG
+from tensorwaves.data.transform import SympyDataTransformer
 from tensorwaves.function.sympy import create_parametrized_function
 
 from aman_examples import d02kkpipi
 from aman_examples.ampgen.model import coupling_symbol
 from aman_examples.ampgen.options import parse_descriptor, read_options
+from aman_examples.estimator import LinearAmplitudeNLL
+from aman_examples.phasespace import ImportanceSampledFunction
 
 REF = np.load(Path(__file__).parent / "data" / "ampgen_d02kkpipi_v2_reference.npz")
 REF_NAMES = list(REF["names"])
@@ -31,6 +34,16 @@ def model():
 @pytest.fixture(scope="module")
 def data(model):
     return model.data_from_momenta(REF["events"])
+
+
+@pytest.fixture(scope="module")
+def d0_couplings(model):
+    return [c for c in model.free_couplings if c.name.startswith("C_{D0")]
+
+
+@pytest.fixture(scope="module")
+def linear(model, d0_couplings):
+    return model.linear_amplitude(d0_couplings)
 
 
 def rms(x):
@@ -131,36 +144,52 @@ def test_phase_space(model):
     np.testing.assert_allclose(total[:, 3], model.table["D0"]["mass"], rtol=1e-12)
 
 
+def test_linear_amplitude(model, data, d0_couplings, linear):
+    """The basis amplitudes and couplings give the total amplitude of AmpGen."""
+    basis, constant = linear
+    expressions = {f"B{k}": e for k, e in enumerate([*basis.values(), constant])}
+    transformer = SympyDataTransformer.from_sympy(expressions, backend="jax")
+    columns = transformer(data)
+    couplings = [model.parameter_defaults[c] for c in d0_couplings] + [1]
+    total = sum(
+        c * np.asarray(columns[name])
+        for c, name in zip(couplings, expressions, strict=True)
+    )
+    use = ~np.any(
+        [near_spline_knot(t, REF["events"]) for t in model.trees.values()], axis=0
+    )
+    assert np.max(np.abs(total - REF["total"])[use]) < 1e-4 * rms(REF["total"])
+
+
+def test_linear_amplitude_not_linear(model):
+    rho_omega = [c for c in model.free_couplings if c.name.startswith("C_{rhoOmega")]
+    phi = coupling_symbol("D0{phi(1020)0{K+,K-},rhoOmega00}")
+    assert rho_omega
+    with pytest.raises(ValueError, match="not linear"):
+        model.linear_amplitude([phi, *rho_omega])
+
+
 @pytest.mark.slow
-def test_small_fit(model):  # ruff: ignore[too-many-locals]
-    """Toys from the model; fit two couplings with the others fixed."""
+def test_small_fit(model, d0_couplings, linear):
+    """Toys from the model; fit the 25 D0 couplings, the rhoOmega couplings fixed."""
     from tensorwaves.data import IntensityDistributionGenerator  # ruff: ignore[import-outside-top-level]
-    from tensorwaves.estimator import UnbinnedNLL, create_cached_function  # ruff: ignore[import-outside-top-level]
     from tensorwaves.optimizer import Minuit2  # ruff: ignore[import-outside-top-level]
 
-    expression = model.intensity
     intensity = create_parametrized_function(
-        expression, model.parameter_defaults, "jax"
+        model.intensity, model.parameter_defaults, "jax"
     )
-    generator = d02kkpipi.phase_space_generator(model)
+    peaked = d02kkpipi.peaked_phase_space_generator(model)
     rng = NumpyUniformRNG(seed=3)
     data = IntensityDistributionGenerator(
-        generator, intensity, bunch_size=100_000
+        peaked, ImportanceSampledFunction(intensity, peaked), bunch_size=100_000
     ).generate(5000, rng)
-    phsp = generator.generate(200_000, rng)
-    rules = [
-        "D0{K*(892)0{K+,pi-},K*(892)bar0{K-,pi+}}",
-        "D0{K(1)(1400)+{K*(892)0{K+,pi-},pi+},K-}",
-    ]
-    free = [coupling_symbol(r) for r in rules]
-    cached, transformer = create_cached_function(
-        expression, model.parameter_defaults, "jax", free_parameters=free
-    )
-    estimator = UnbinnedNLL(cached, transformer(data), transformer(phsp), backend="jax")
-    initial = {c.name: 1.2 * model.parameter_defaults[c] for c in free}
+    phsp = peaked.generate(200_000, rng)
+    phsp["weights"] = 1 / peaked.density_ratio(phsp)
+    estimator = LinearAmplitudeNLL(*linear, data, phsp)
+    initial = {c.name: 1.2 * model.parameter_defaults[c] for c in d0_couplings}
     result = Minuit2().optimize(estimator, initial)
     assert result.minimum_valid
-    for c in free:
+    for c in d0_couplings:
         true = model.parameter_defaults[c]
         value, error = result.parameter_values[c.name], result.parameter_errors[c.name]
         assert abs(value.real - true.real) < 5 * error.real

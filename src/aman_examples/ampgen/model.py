@@ -40,6 +40,7 @@ from aman_examples.ampgen.options import (
 from aman_examples.dynamics import AbsSquared
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
 STABLE_THRESHOLD = 1e-6  # GeV, AmpGen Particle::StableThreshold (1 keV)
@@ -357,6 +358,40 @@ class AmpGenModel:
     def intensity(self) -> sp.Expr:
         """:math:`|A|^2` of the unfolded amplitude (:class:`.AbsSquared`: ``sp.Abs(A)**2`` takes minutes to unfold and lambdify for this model)."""
         return AbsSquared(self.amplitude.doit())
+
+    def linear_amplitude(
+        self,
+        free: Sequence[sp.Symbol],
+        parameters: Mapping[sp.Symbol, Any] | None = None,
+    ) -> tuple[dict[sp.Symbol, sp.Expr], sp.Expr]:
+        r"""The amplitude as :math:`A = \sum_k c_k B_k + B_0`, for :class:`.LinearAmplitudeNLL`.
+
+        Returns the basis amplitudes :math:`B_k = \partial A / \partial c_k` for each of
+        the ``free`` couplings :math:`c_k`, and the remainder :math:`B_0`. All other
+        parameters are fixed to ``parameters`` (default: ``parameter_defaults``).
+        Building them chain by chain is much faster than differentiating
+        :attr:`amplitude`. Raises `ValueError` if the amplitude is not linear in the
+        free couplings, e.g. when two couplings of a product are free.
+        """
+        values = dict(self.parameter_defaults if parameters is None else parameters)
+        fixed = {s: v for s, v in values.items() if s not in set(free)}
+        basis: dict[sp.Symbol, sp.Expr] = dict.fromkeys(free, sp.S.Zero)
+        constant = sp.S.Zero
+        for name, chain in self.chains.items():
+            coupling = self.couplings[name]
+            used = [c for c in free if c in coupling.free_symbols]
+            expression = chain.doit().xreplace(fixed)
+            if not used:
+                constant += coupling.xreplace(fixed) * expression
+            for c in used:
+                derivative = sp.diff(coupling, c)
+                if derivative.free_symbols & set(free):
+                    msg = (
+                        f"The amplitude is not linear in the free couplings: {coupling}"
+                    )
+                    raise ValueError(msg)
+                basis[c] += derivative.xreplace(fixed) * expression
+        return basis, constant
 
     def data_from_momenta(self, momenta: Any) -> dict[str, Any]:
         """Data sample from an array of shape ``(N, 4 n)``: (x, y, z, E) of each particle."""
