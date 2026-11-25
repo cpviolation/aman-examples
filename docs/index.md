@@ -12,6 +12,7 @@ AmpliTF and TFA2.
 belle-model
 toy-fit
 mixing
+mixing-cpv
 acceptance
 d02kkpipi
 api

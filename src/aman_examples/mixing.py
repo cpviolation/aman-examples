@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import sympy as sp
 from tensorwaves.data.transform import SympyDataTransformer
 
@@ -147,3 +148,73 @@ def amplitude_transformer(
         },
         backend,
     )
+
+
+# ----------------------------------------------------------------------------
+# CP-violation parametrisation of the bin-flip method
+
+#: x_CP, y_CP, Delta x, Delta y: z_CP = -(y_CP + i x_CP), Delta z = -(Delta y + i Delta x)
+x_cp, y_cp, delta_x, delta_y = sp.symbols("x_CP y_CP Delta_x Delta_y", real=True)
+
+
+def zcp_from_mixing(
+    x: float, y: float, q_over_p: float = 1.0, phase: float = 0.0
+) -> dict[str, float]:
+    r""":math:`x_{CP}, y_{CP}, \Delta x, \Delta y` from :math:`x, y, |q/p|, \phi = \arg(q/p)`.
+
+    With :math:`z_{CP} \pm \Delta z \equiv -(q/p)^{\pm 1}(y + ix)` and :math:`z_{CP} =
+    -(y_{CP} + i x_{CP})`, :math:`\Delta z = -(\Delta y + i \Delta x)` (LHCb, PRL 127
+    (2021) 111801; Di Canto et al., PRD 99 (2019) 012007).
+    """
+    qp = q_over_p * np.exp(1j * phase)
+    w = y + 1j * x
+    z = -(qp + 1 / qp) * w / 2
+    dz = -(qp - 1 / qp) * w / 2
+    return {"x_CP": -z.imag, "y_CP": -z.real, "Delta_x": -dz.imag, "Delta_y": -dz.real}
+
+
+def mixing_from_zcp(
+    x_cp: float, y_cp: float, delta_x: float, delta_y: float
+) -> dict[str, float]:
+    r"""Inverse of :func:`zcp_from_mixing`: :math:`x, y, |q/p|, \phi`, on the branch where :math:`y + ix \to y_{CP} + i x_{CP}` without CP violation."""
+    plus = (y_cp + delta_y) + 1j * (x_cp + delta_x)  # (q/p)(y + ix)
+    minus = (y_cp - delta_y) + 1j * (x_cp - delta_x)  # (p/q)(y + ix)
+    base = y_cp + 1j * x_cp
+    w = base * np.sqrt(plus * minus / base**2)
+    qp = plus / w
+    return {"x": w.imag, "y": w.real, "q_over_p": abs(qp), "phase": float(np.angle(qp))}
+
+
+def formulate_mixing_model_zcp(
+    x_cp_value: float = 0.004,
+    y_cp_value: float = 0.0064,
+    delta_x_value: float = 0.0,
+    delta_y_value: float = 0.0,
+    *,
+    initial_d0: bool = True,
+    relative_to_decay: bool = True,
+) -> MixingModel:
+    r"""The rate of :func:`formulate_mixing_model`, with the parameters :math:`x_{CP}, y_{CP}, \Delta x, \Delta y` of the bin-flip method.
+
+    The rate is exact: :math:`y + ix = (y_{CP} + ix_{CP})\sqrt{1 - (\Delta y + i\Delta
+    x)^2/(y_{CP} + ix_{CP})^2}` (the branch that reduces to :math:`y_{CP} + ix_{CP}`
+    without CP violation) and :math:`q/p = (y_{CP} + \Delta y + i(x_{CP} + \Delta x))/(y
+    + ix)`.
+    """
+    base = y_cp + sp.I * x_cp
+    w = base * sp.sqrt(1 - (delta_y + sp.I * delta_x) ** 2 / base**2)
+    q_p = (y_cp + delta_y + sp.I * (x_cp + delta_x)) / w
+    psi = time_evolution(
+        t, sp.im(w), sp.re(w), tau, relative_to_decay=relative_to_decay
+    )
+    intensity = mixing_intensity(
+        amplitude_symbol, amplitude_bar_symbol, q_p, psi, initial_d0=initial_d0
+    )
+    defaults = {
+        x_cp: x_cp_value,
+        y_cp: y_cp_value,
+        delta_x: delta_x_value,
+        delta_y: delta_y_value,
+        tau: 1.0,
+    }
+    return MixingModel(intensity, defaults)

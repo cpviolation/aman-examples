@@ -11,6 +11,7 @@ mirror image; the Cabibbo-favoured :math:`K^*(892)^-` band, at low
 from __future__ import annotations
 
 from functools import cache
+from typing import Any
 
 import numpy as np
 
@@ -110,3 +111,123 @@ def strong_phase_parameters(
         out["F_plus"].append(np.sum(np.abs(a) ** 2) / total)
         out["F_minus"].append(np.sum(np.abs(amplitude[bins == -b]) ** 2) / total)
     return {k: np.array(v) for k, v in out.items()}
+
+
+def binflip_ratio(  # ruff: ignore[too-many-positional-arguments]
+    t_mean: np.ndarray,
+    t2_mean: np.ndarray,
+    r: np.ndarray,
+    x_b: np.ndarray,
+    z: complex,
+    w2: complex,
+) -> np.ndarray:
+    r"""Bin-flip ratio :math:`R_b(t)` to second order in the mixing parameters.
+
+    For an initial :math:`D^0`, with :math:`z = z_{CP} + \Delta z` and :math:`w^2 =
+    z_{CP}^2 - \Delta z^2 = (q/p)(p/q)(y + ix)^2`:
+
+    .. math::
+
+        R_b = \frac{r_b\left(1 + \frac{\langle t^2\rangle}{4}\mathrm{Re}\,w^2\right)
+              + \sqrt{r_b}\langle t\rangle \mathrm{Re}(X_b z)
+              + \frac{\langle t^2\rangle}{4}|z|^2}
+             {1 + \frac{\langle t^2\rangle}{4}\mathrm{Re}\,w^2
+              + \sqrt{r_b}\langle t\rangle \mathrm{Re}(X_b^* z)
+              + r_b\frac{\langle t^2\rangle}{4}|z|^2},
+
+    with :math:`t` in units of :math:`\tau`, :math:`r_b = F_{+b}/F_{-b}` and :math:`X_b
+    = c_b - i s_b` (:func:`strong_phase_parameters`). For an initial :math:`\bar{D}^0`,
+    with the Dalitz-plot coordinates swapped before binning, the same expression holds
+    with :math:`z = z_{CP} - \Delta z`.
+
+    It follows from :math:`A(t) \propto \cosh\frac{(y+ix)t}{2} A_f + \frac{z\,t}{2}
+    \bar{A}_f + O(t^2)` integrated over bin :math:`+b` (numerator) and :math:`-b`
+    (denominator).
+    """
+    t_mean, t2_mean = np.asarray(t_mean), np.asarray(t2_mean)
+    r, x_b = np.asarray(r)[:, None], np.asarray(x_b)[:, None]
+    common = 1 + t2_mean / 4 * np.real(w2)
+    numerator = (
+        r * common + np.sqrt(r) * t_mean * np.real(x_b * z) + t2_mean / 4 * abs(z) ** 2
+    )
+    denominator = (
+        common
+        + np.sqrt(r) * t_mean * np.real(np.conj(x_b) * z)
+        + r * t2_mean / 4 * abs(z) ** 2
+    )
+    return numerator / denominator
+
+
+def time_binned_ratios(
+    t: np.ndarray, bins: np.ndarray, edges: np.ndarray
+) -> dict[str, np.ndarray]:
+    r"""Ratios :math:`R_b = N(+b)/N(-b)` in the decay-time bins ``edges``, with their uncertainties and :math:`\langle t\rangle, \langle t^2\rangle` of each time bin."""
+    t, bins = np.asarray(t), np.asarray(bins)
+    index = np.digitize(t, edges) - 1
+    n = len(edges) - 1
+    t_mean = np.array([t[index == i].mean() for i in range(n)])
+    t2_mean = np.array([np.mean(t[index == i] ** 2) for i in range(n)])
+    n_plus = np.array([
+        [np.sum((bins == b) & (index == i)) for i in range(n)]
+        for b in range(1, N_BINS + 1)
+    ])
+    n_minus = np.array([
+        [np.sum((bins == -b) & (index == i)) for i in range(n)]
+        for b in range(1, N_BINS + 1)
+    ])
+    ratio = n_plus / n_minus
+    error = np.sqrt(n_plus / n_minus**2 + n_plus**2 / n_minus**3)
+    return {"t_mean": t_mean, "t2_mean": t2_mean, "ratio": ratio, "error": error}
+
+
+def fit_binflip(
+    ratios: dict[str, dict[str, np.ndarray]],
+    x_b: np.ndarray,
+    r_initial: np.ndarray,
+    initial: dict[str, float] | None = None,
+) -> Any:
+    r"""Least-squares fit of :math:`x_{CP}, y_{CP}, \Delta x, \Delta y` and the :math:`r_b` to bin-flip ratios of :math:`D^0` and :math:`\bar{D}^0` decays.
+
+    Args:
+        ratios: :func:`time_binned_ratios` of each flavour, keyed ``"D0"`` and
+            ``"D0bar"`` (the latter binned with swapped Dalitz-plot coordinates).
+
+        x_b: :math:`X_b = c_b - i s_b` of the 8 bins (fixed, e.g. from a model or
+            from measurements at charm threshold).
+
+        r_initial: Starting values of :math:`r_b`.
+
+        initial: Starting values of ``x_CP``, ``y_CP``, ``Delta_x``, ``Delta_y`` (0 by
+            default).
+
+    Returns:
+        The `iminuit.Minuit` object after ``migrad`` and ``hesse``.
+    """
+    from iminuit import Minuit  # ruff: ignore[import-outside-top-level]
+
+    names = ["x_CP", "y_CP", "Delta_x", "Delta_y"]
+    r_names = [f"r_{b}" for b in range(1, N_BINS + 1)]
+    sign = {"D0": 1, "D0bar": -1}
+
+    def chi2(*p: float) -> float:
+        xcp, ycp, dx, dy = p[:4]
+        r = np.array(p[4:])
+        z_cp, dz = -(ycp + 1j * xcp), -(dy + 1j * dx)
+        total = 0.0
+        for flavour, data in ratios.items():
+            z = z_cp + sign[flavour] * dz
+            model = binflip_ratio(
+                data["t_mean"], data["t2_mean"], r, x_b, z, z_cp**2 - dz**2
+            )
+            total += np.sum(((data["ratio"] - model) / data["error"]) ** 2)
+        return total
+
+    start = dict.fromkeys(names, 0.0) | dict(initial or {})
+    start |= {n: float(v) for n, v in zip(r_names, r_initial, strict=True)}
+    minuit = Minuit(chi2, *start.values(), name=list(start))
+    minuit.errordef = Minuit.LEAST_SQUARES
+    for name in r_names:
+        minuit.limits[name] = (0, None)
+    minuit.migrad()
+    minuit.hesse()
+    return minuit

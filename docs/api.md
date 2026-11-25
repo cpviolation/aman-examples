@@ -8,6 +8,7 @@
 .. automodule:: aman_examples.acceptance
 .. automodule:: aman_examples.parametric_acceptance
 .. automodule:: aman_examples.binflip
+.. automodule:: aman_examples.estimator
 .. automodule:: aman_examples.d02kkpipi
 .. automodule:: aman_examples.ampgen.model
 .. automodule:: aman_examples.ampgen.covariant
