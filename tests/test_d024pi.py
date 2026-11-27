@@ -74,26 +74,26 @@ def test_phase_space():
     np.testing.assert_allclose(p.sum(axis=1)[:, 3], d024pi.M_D0, rtol=1e-12)
 
 
-@pytest.mark.slow
 def test_amplitudes():  # ruff: ignore[too-many-locals]
     """Chains against the NumPy reference; fit fractions and F+ against the paper."""
     model = d024pi.formulate_model()
-    assert sorted(model.chains) == sorted(d024pi.COUPLINGS)
+    assert list(model.chains) == list(d024pi.COUPLINGS)
     assert len(model.free_couplings) == len(d024pi.COUPLINGS) - 1
     sample = d024pi.phase_space_generator().generate(40_000, NumpyUniformRNG(seed=2))
     p = momenta(sample)
     p_bar = np.stack([p[:, j] * PARITY for j in (1, 0, 3, 2)], axis=1)
+    data, data_bar = model.data(as_data(p)), model.data(as_data(p_bar))
     reference = reference_chains(p[:500])
     amps, amps_bar = {}, {}
     for name, expr in model.chains.items():
-        function = create_function(expr.doit(), backend="jax")
-        values = np.asarray(function(as_data(p)))
+        function = create_function(expr, backend="numpy")
+        values = np.asarray(function(data))
         ref = reference[name]
         rms = np.sqrt(np.mean(np.abs(ref) ** 2))
         assert np.max(np.abs(values[:500] - ref)) < 1e-8 * rms, name
         coupling = model.parameter_defaults[model.couplings[name]]
         amps[name] = coupling * values
-        amps_bar[name] = coupling * np.asarray(function(as_data(p_bar)))
+        amps_bar[name] = coupling * np.asarray(function(data_bar))
     total, total_bar = sum(amps.values()), sum(amps_bar.values())
     norm = np.mean(np.abs(total) ** 2)
     for group, names in d024pi.fit_fraction_groups().items():
@@ -104,3 +104,19 @@ def test_amplitudes():  # ruff: ignore[too-many-locals]
     minus = np.mean(np.abs(total - total_bar) ** 2)
     value, error = d024pi.F_PLUS
     assert 100 * plus / (plus + minus) == pytest.approx(value, abs=error)
+    # the intensity as a function of four-momenta
+    intensity = model.function(model.intensity)
+    np.testing.assert_allclose(
+        intensity(as_data(p[:100])), np.abs(total[:100]) ** 2, rtol=1e-10
+    )
+
+
+def test_expanded_chain():
+    """A chain written in the four-momenta equals its building-block form."""
+    model = d024pi.formulate_model()
+    sample = d024pi.phase_space_generator().generate(200, NumpyUniformRNG(seed=3))
+    name = "rho rho [S]"
+    blocks = create_function(model.chains[name], backend="numpy")(model.data(sample))
+    expanded = model.expanded_chains([name])[name].doit()
+    direct = create_function(expanded, backend="numpy")(sample)
+    np.testing.assert_allclose(direct, blocks, rtol=1e-12)

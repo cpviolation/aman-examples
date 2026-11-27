@@ -27,7 +27,7 @@ enforced by [ComPWA/policy](https://github.com/ComPWA/policy).
 | `src/aman_examples/ampgen/` | Models from AmpGen options files: parsing, AmpGen's daughter ordering and orbital rules, covariant spin factors and AmpGen's lineshapes (Breit-Wigner, Gounaris-Sakurai, Flatté, FOCUS, K-matrix, spline running widths) |
 | `src/aman_examples/d02kkpipi.py` | The LHCb D0 → K+ K− π+ π− model (AmpGen `DtoKKpipi_v2.opt`, 55 decay chains) and four-body phase space |
 | `src/aman_examples/d02k3pi.py` | The LHCb D0 → K− π+ π+ π− (CF, 33 chains) and D0 → K+ π− π− π+ (DCS, 15 chains) models, EPJC 78 (2018) 443, from AmpGen's options files |
-| `src/aman_examples/d024pi.py` | The BESIII D0 → π+ π− π+ π− model, CPC 48 (2024) 083001, in the paper's formalism (Zemach tensors, K-matrix with two-S-wave expansion, 3π running widths) |
+| `src/aman_examples/d024pi.py` | The BESIII D0 → π+ π− π+ π− model, CPC 48 (2024) 083001, in the paper's formalism (Zemach tensors, K-matrix with two-S-wave expansion, 3π running widths), evaluated in stages of per-event building blocks as in AmpGen |
 | `docs/belle-model.ipynb` | The model, its Dalitz plot and fit fractions |
 | `docs/toy-fit.ipynb` | Toy generation and a fit of all free couplings |
 | `docs/mixing.ipynb` | Mixing toys with the parametric (v4) acceptance, fit of x and y, bin-flip ratios and strong phases |

@@ -25,6 +25,13 @@ The formalism follows the paper (GPUPWA):
   = -5` GeV², and its two-S-wave expansion, Eq. (14) of the paper;
 - the amplitudes are summed over the exchanges of the identical pions.
 
+As in AmpGen, which caches the sub-expressions shared by its decay chains, the model is
+evaluated in stages (:class:`FourPionModel`): the composite four-momenta, then orbital
+tensors, lineshapes and K-matrix terms of each pion pair and triplet, then spin factors
+are computed once per event as columns (:meth:`FourPionModel.data`), and the chains are
+short expressions of these columns. Compiling the model takes seconds instead of minutes
+for the chains written in the four-momenta.
+
 Where the paper leaves a convention open, it was fixed by reproducing the published fit
 fractions, interference fractions and :math:`F_+`: the isospin factors of the paper's
 Eqs. (17)-(22) are already part of the fitted couplings (the isoscalar terms of
@@ -48,11 +55,13 @@ from __future__ import annotations
 
 import cmath
 import functools
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 import sympy as sp
 from ampform.sympy import NumPyPrintable
+from tensorwaves.function.sympy import create_function
 
 from aman_examples.ampgen import covariant as cov
 from aman_examples.ampgen import lineshapes as ls
@@ -60,10 +69,11 @@ from aman_examples.ampgen.model import AmpGenModel
 from aman_examples.phasespace import PairPhaseSpaceGenerator
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from sympy.printing.latex import LatexPrinter
     from sympy.printing.numpy import NumPyPrinter
+    from tensorwaves.interface import DataSample
 
 FINAL_STATE = ["pi+", "pi-", "pi+", "pi-"]
 M_D0 = 1.86484
@@ -479,7 +489,6 @@ def _dalitz_momenta(m_parent: float, masses, n: int):  # ruff: ignore[too-many-l
 
 @functools.cache
 def _three_pion_function(name: str, *, neutral: bool) -> Callable:
-    from tensorwaves.function.sympy import create_function  # ruff: ignore[import-outside-top-level]
 
     symbols = [[sp.Symbol(f"q{i}_{c}", real=True) for c in "xyzE"] for i in range(3)]
     amp = _three_pion_amplitude(name, symbols, neutral=neutral)
@@ -796,42 +805,255 @@ def _running_propagator(s, name):
     return 1 / (m0**2 - s - sp.I * sp.sqrt(s) * g0 * ratio)
 
 
-# --- D0 amplitudes
-def _chains_one_ordering(a, b, c, d) -> dict[str, sp.Expr]:  # ruff: ignore[too-many-locals, too-many-statements]
-    """Unit-coupling chains for one assignment: pi+ = a, c; pi- = b, d."""
-    pd = cov.add(cov.add(a, b), cov.add(c, d))
-    out: dict[str, sp.Expr] = {}
-    for charge, (plus, minus, bach, d_bach, rho_sign) in {
-        "+": (a, b, c, d, 1),
-        "-": (a, b, d, c, -1),
-    }.items():
-        other = "-" if charge == "+" else "+"
-        pa = cov.add(cov.add(plus, minus), bach)
-        s_a = _mass2(pa)
-        t_d = _t1(pd, pa, d_bach)
-        b_d1 = _barrier(1, _q2(pd, pa, d_bach), R_D)
-        vec = _a1_vector(pa, plus, minus, bach, rho_sign, 1, A1_DECAYS)
-        out[f"a1(1260){charge} pi{other}"] = (
-            cov.dot(t_d, vec) * b_d1 * _running_propagator(s_a, "a1(1260)")
+# --- D0 amplitudes, evaluated in two stages as in AmpGen
+@dataclass(frozen=True)
+class FourPionModel(AmpGenModel):
+    """An :class:`.AmpGenModel` whose chains are written in per-event building blocks.
+
+    ``building_blocks`` maps each block symbol (a lineshape of a pion pair or triplet, a
+    K-matrix term, or a spin factor with its barrier factors) to its expression in the
+    four-momenta; ``chains`` are short expressions of these blocks. Evaluate them on
+    :meth:`data`, the building blocks of a sample of four-momenta: each block is
+    lambdified separately and computed once per event, which is much faster to compile
+    than the chains written in the four-momenta (:meth:`expanded_chains`).
+    """
+
+    stages: tuple[dict[sp.Symbol, sp.Expr], ...] = field(default=(), repr=False)
+
+    @property
+    def building_blocks(self) -> dict[sp.Symbol, sp.Expr]:
+        """All building blocks, each in terms of the four-momenta and earlier blocks."""
+        return {s: e for stage in self.stages for s, e in stage.items()}
+
+    @functools.cached_property
+    def transformers(self) -> tuple[_StageTransformer, ...]:
+        """One data transformer (NumPy) per stage of building blocks."""
+        return tuple(_StageTransformer(stage) for stage in self.stages)
+
+    def data(self, sample: DataSample) -> dict[str, Any]:
+        """The building blocks of a sample of four-momenta ``p<i>_x``, ..., ``p<i>_E``."""
+        data = dict(sample)
+        for transformer in self.transformers:
+            data.update(transformer(data))
+        return data
+
+    def function(self, expression: sp.Expr, backend: str = "jax") -> Callable:
+        """``expression`` (e.g. :attr:`intensity`) as a function of four-momenta."""
+        values = {
+            s: v
+            for s, v in self.parameter_defaults.items()
+            if s in expression.free_symbols
+        }
+        function = create_function(expression.xreplace(values).doit(), backend=backend)
+        return _ComposedFunction(self, function)
+
+    def expanded_chains(self, names: Sequence[str] | None = None) -> dict[str, sp.Expr]:
+        """The chains (all, or ``names``) written in the four-momenta (slow to lambdify)."""
+        chains = {n: self.chains[n] for n in (self.chains if names is None else names)}
+        for stage in reversed(self.stages):
+            chains = {n: e.xreplace(stage) for n, e in chains.items()}
+        return chains
+
+
+class _StageTransformer:
+    """All building blocks of a stage, lambdified as one NumPy function (with CSE)."""
+
+    def __init__(self, blocks: dict[sp.Symbol, sp.Expr]) -> None:
+        expressions = [e.doit() for e in blocks.values()]
+        self.inputs = sorted(
+            set().union(*(e.free_symbols for e in expressions)), key=str
         )
-        vec = _a1_vector(pa, plus, minus, bach, rho_sign, 0, {"rho_S": 1.0})
-        out[f"a1(1640){charge} pi{other}"] = (
-            cov.dot(t_d, vec) * b_d1 * _running_propagator(s_a, "a1(1640)")
+        self.outputs = [s.name for s in blocks]
+        self.function = sp.lambdify(self.inputs, expressions, modules="numpy", cse=True)
+
+    def __call__(self, data: DataSample) -> dict[str, Any]:
+        # NumPy evaluates both branches of the Piecewise square roots of complex_sqrt
+        with np.errstate(invalid="ignore", divide="ignore"):
+            values = self.function(*(data[s.name] for s in self.inputs))
+        return dict(zip(self.outputs, values, strict=True))
+
+
+class _ComposedFunction:
+    """A TensorWaves-like function of four-momenta: building blocks, then ``function``."""
+
+    def __init__(self, model: FourPionModel, function: Callable) -> None:
+        self.model, self.function = model, function
+
+    def __call__(self, data: DataSample) -> Any:
+        return self.function(self.model.data(data))
+
+
+class _Blocks:
+    """Building blocks, created once per name."""
+
+    def __init__(self, p: list[list[sp.Symbol]]) -> None:
+        self.p = p
+        self.stage: dict[sp.Symbol, int] = {}
+        self.blocks: dict[sp.Symbol, sp.Expr] = {}
+
+    def _register(self, symbol: sp.Symbol, expr: sp.Expr) -> None:
+        if symbol not in self.blocks:
+            depends = [
+                self.stage[x] for x in sp.sympify(expr).free_symbols if x in self.stage
+            ]
+            self.stage[symbol] = 1 + max(depends, default=-1)
+            self.blocks[symbol] = expr
+
+    def stages(self) -> tuple[dict[sp.Symbol, sp.Expr], ...]:
+        n = 1 + max(self.stage.values())
+        return tuple(
+            {s: e for s, e in self.blocks.items() if self.stage[s] == k}
+            for k in range(n)
         )
-        p_iso = cov.add(plus, minus)
-        if charge == "+":
-            t_a = _t1(pa, p_iso, bach)
-            out["a1(1420)+ pi-"] = (
-                cov.dot(t_d, t_a)
-                * _barrier(1, _q2(pa, p_iso, bach), R_RESONANCE)
-                * _flatte_f0(_mass2(p_iso))
-                * b_d1
-                * _rbw(s_a, *RESONANCES["a1(1420)"])
+
+    def get(
+        self, name: str, make: Callable[[], sp.Expr], *, real: bool = False
+    ) -> sp.Symbol:
+        symbol = sp.Symbol(name, real=True) if real else sp.Symbol(name)
+        if symbol not in self.blocks:
+            self._register(symbol, make())
+        return symbol
+
+    def vector(self, name: str, make: Callable[[], list]) -> list[sp.Symbol]:
+        """A four-vector (upper index) as four real columns."""
+        symbols = [sp.Symbol(f"{name}_{c}", real=True) for c in "xyzE"]
+        if symbols[0] not in self.blocks:
+            for symbol, expr in zip(symbols, make(), strict=True):
+                self._register(symbol, expr)
+        return symbols
+
+    def tensor(self, name: str, make: Callable[[], list]) -> list[list[sp.Symbol]]:
+        """A rank-2 tensor (upper indices) as 16 real columns."""
+        symbols = [
+            [sp.Symbol(f"{name}_{a}{b}", real=True) for b in "xyzE"] for a in "xyzE"
+        ]
+        if symbols[0][0] not in self.blocks:
+            for row_s, row_e in zip(symbols, make(), strict=True):
+                for symbol, expr in zip(row_s, row_e, strict=True):
+                    self._register(symbol, expr)
+        return symbols
+
+    def momentum(self, indices) -> list[sp.Expr]:
+        """The summed four-momentum of the pions ``indices``, as symbols of a column."""
+        if len(indices) == 1:
+            return self.p[indices[0]]
+        key = "".join(str(i) for i in sorted(indices))
+        return self.vector(
+            f"p{key}", lambda: [sum(self.p[i][k] for i in indices) for k in range(4)]
+        )
+
+    # pion pairs (pi+ i, pi- j)
+    def rho(self, i: int, j: int, name: str = "rho(770)") -> sp.Symbol:
+        def make():
+            s = _mass2(self.momentum((i, j)))
+            return _gounaris_sakurai(s, name) * _barrier(
+                1, ls.q2(s, M_PI**2, M_PI**2), R_RESONANCE
             )
-        # a2(1320) -> rho pi [D], D0 -> a2 pi [D]
-        t_t = _t2(pa, p_iso, bach)
-        w = _p1_times(pa, _t1(p_iso, plus, minus))
+
+        tag = "rho" if name == "rho(770)" else "rho1450"
+        return self.get(f"{tag}_{i}{j}", make)
+
+    def f2(self, i: int, j: int) -> sp.Symbol:
+        def make():
+            s = _mass2(self.momentum((i, j)))
+            bw = _rbw(s, RESONANCES["f2(1270)"][0], _two_body_width(s, "f2(1270)", 2))
+            return bw * _barrier(2, ls.q2(s, M_PI**2, M_PI**2), R_RESONANCE)
+
+        return self.get(f"f2_{i}{j}", make)
+
+    def f0(self, i: int, j: int) -> sp.Symbol:
+        return self.get(f"f0_{i}{j}", lambda: _flatte_f0(_mass2(self.momentum((i, j)))))
+
+    def kmatrix(self, i: int, j: int, term: str) -> sp.Symbol:
+        return self.get(
+            f"K{term}_{i}{j}",
+            lambda: _kmatrix_term(_mass2(self.momentum((i, j))), term),
+        )
+
+    def swave(self, i: int, j: int, coefficients: dict[str, complex]) -> sp.Expr:
+        return sum(c * self.kmatrix(i, j, t) for t, c in coefficients.items())
+
+    # pion triplets
+    def propagator(self, indices, name: str) -> sp.Symbol:
+        key = "".join(str(i) for i in sorted(indices))
+
+        def make():
+            s = _mass2(self.momentum(indices))
+            if name in {"a1(1420)", "a2(1320)"}:
+                return _rbw(s, *RESONANCES[name])
+            return _running_propagator(s, name)
+
+        return self.get(f"P_{name}_{key}", make)
+
+    def spin(self, name: str, make: Callable[[], sp.Expr]) -> sp.Symbol:
+        return self.get(f"S_{name}", make, real=True)
+
+
+def _three_body_terms(blocks: _Blocks, order, charge: str) -> dict[str, sp.Expr]:  # ruff: ignore[too-many-locals]
+    """Chains with a pi+- pi-+ pi+- resonance, for one assignment of the pions."""
+    a, b, c, d = order
+    plus, minus, bach, d_bach, rho_sign = (
+        (a, b, c, d, 1) if charge == "+" else (a, b, d, c, -1)
+    )
+    p = blocks.momentum
+    tag = f"{plus}{minus}{bach}{d_bach}"
+    pd, pa, p_iso = p((0, 1, 2, 3)), p((plus, minus, bach)), p((plus, minus))
+
+    triplet_tag = "".join(str(i) for i in sorted((plus, minus, bach)))
+    pair_tag = f"{plus}{minus}"
+    t_d = blocks.vector(f"tD{triplet_tag}", lambda: _t1(pd, pa, blocks.p[d_bach]))
+    t_a = blocks.vector(
+        f"tA{triplet_tag}_{pair_tag}", lambda: _t1(pa, p_iso, blocks.p[bach])
+    )
+    t_iso = blocks.vector(
+        f"t{pair_tag}", lambda: _t1(p_iso, blocks.p[plus], blocks.p[minus])
+    )
+    t2_a = blocks.tensor(
+        f"TA{triplet_tag}_{pair_tag}", lambda: _t2(pa, p_iso, blocks.p[bach])
+    )
+    t2_iso = blocks.tensor(
+        f"T{pair_tag}", lambda: _t2(p_iso, blocks.p[plus], blocks.p[minus])
+    )
+    w = blocks.vector(f"w{triplet_tag}_{pair_tag}", lambda: _p1_times(pa, t_iso))
+    b_d1 = blocks.get(
+        f"BD1_{triplet_tag}",
+        lambda: _barrier(1, _q2(pd, pa, blocks.p[d_bach]), R_D),
+        real=True,
+    )
+    b_d2 = blocks.get(
+        f"BD2_{triplet_tag}",
+        lambda: _barrier(2, _q2(pd, pa, blocks.p[d_bach]), R_D),
+        real=True,
+    )
+    b_a1 = blocks.get(
+        f"BA1_{triplet_tag}_{pair_tag}",
+        lambda: _barrier(1, _q2(pa, p_iso, blocks.p[bach]), R_RESONANCE),
+        real=True,
+    )
+    b_a2 = blocks.get(
+        f"BA2_{triplet_tag}_{pair_tag}",
+        lambda: _barrier(2, _q2(pa, p_iso, blocks.p[bach]), R_RESONANCE),
+        real=True,
+    )
+
+    s_rho_s = blocks.spin(f"rhoS_{tag}", lambda: cov.dot(t_d, w) * b_d1)
+
+    def rho_d():
+        low = cov.lower(t_iso)
+        vec = [sum(t2_a[i][j] * low[j] for j in cov.INDICES) for i in cov.INDICES]
+        return cov.dot(t_d, vec) * b_a2 * b_d1
+
+    s_rho_d = blocks.spin(f"rhoD_{tag}", rho_d)
+    f2_vector = blocks.vector(
+        f"f2v{triplet_tag}_{pair_tag}", lambda: _p2_vector(pa, t_a, t2_iso)
+    )
+    s_f2 = blocks.spin(f"f2P_{tag}", lambda: cov.dot(t_d, f2_vector) * b_a1 * b_d1)
+    s_s = blocks.spin(f"SP_{tag}", lambda: cov.dot(t_d, t_a) * b_a1 * b_d1)
+    t2_d = blocks.tensor(f"TD{triplet_tag}", lambda: _t2(pd, pa, blocks.p[d_bach]))
+
+    def a2_spin():
         idx, metric = cov.INDICES, cov.METRIC
+        t_t = t2_a
         y_low = [
             [
                 sum(
@@ -849,113 +1071,150 @@ def _chains_one_ordering(a, b, c, d) -> dict[str, sp.Expr]:  # ruff: ignore[too-
             for al in idx
         ]
         # Y is transverse to p_a and traceless, so P2 only symmetrises it
-        y_sym = [[(y_low[i][j] + y_low[j][i]) / 2 for j in idx] for i in idx]
-        t_dd = _t2(pd, pa, d_bach)
-        spin = sum(t_dd[i][j] * y_sym[i][j] for i in idx for j in idx)
-        rho = _gounaris_sakurai(_mass2(p_iso), "rho(770)") * _barrier(
-            1, _q2(p_iso, plus, minus), R_RESONANCE
-        )
-        out[f"a2(1320){charge} pi{other}"] = (
-            rho_sign
-            * spin
-            * _barrier(2, _q2(pd, pa, d_bach), R_D)
-            * _barrier(2, _q2(pa, p_iso, bach), R_RESONANCE)
-            * rho
-            * _rbw(s_a, *RESONANCES["a2(1320)"])
-        )
-        out[f"pi(1300){charge} pi{other}"] = _pi1300_scalar(
-            pa, plus, minus, bach, rho_sign, 1
-        ) * _running_propagator(s_a, "pi(1300)")
-    # two-body x two-body: (a b)(c d)
-    r1, r2 = cov.add(a, b), cov.add(c, d)
-    s1, s2 = _mass2(r1), _mass2(r2)
-    q2d = _q2(pd, r1, r2)
-    t_r1, t_r2 = _t1(r1, a, b), _t1(r2, c, d)
-
-    def rho_ls(s, name):
-        return _gounaris_sakurai(s, name) * _barrier(
-            1, ls.q2(s, M_PI**2, M_PI**2), R_RESONANCE
+        return (
+            sum(t2_d[i][j] * (y_low[i][j] + y_low[j][i]) / 2 for i in idx for j in idx)
+            * b_d2
+            * b_a2
         )
 
-    rho1, rho2, rho2h = (
-        rho_ls(s1, "rho(770)"),
-        rho_ls(s2, "rho(770)"),
-        rho_ls(s2, "rho(1450)"),
-    )
-    t_d = _t1(pd, r1, r2)
-    p_spin = cov.levi_civita_contract(t_d, t_r1, t_r2, pd) * _barrier(1, q2d, R_D)
-    d_spin = cov.contract_lower(_t2(pd, r1, r2), t_r1, t_r2) * _barrier(2, q2d, R_D)
-    half = sp.Rational(1, 2)  # rho0 rho0 and S S: each pairing comes twice
-    out["rho rho [S]"] = half * cov.dot(t_r1, t_r2) * rho1 * rho2
-    out["rho rho [P]"] = half * p_spin * rho1 * rho2
-    out["rho rho [D]"] = half * d_spin * rho1 * rho2
-    out["rho rho(1450) [P]"] = p_spin * rho1 * rho2h
-    out["rho rho(1450) [D]"] = d_spin * rho1 * rho2h
-    vs = cov.dot(t_d, t_r1) * _barrier(1, q2d, R_D) * rho1
-    for label, term in (("beta1", "pole0"), ("f_pipi", "prod0"), ("f_KK", "prod1")):
-        out[f"rho S [{label}]"] = vs * _kmatrix_term(s2, term)
-
-    def k(s, term):
-        return _kmatrix_term(s, term)
-
-    out["S S [a11]"] = half * 2 * k(s1, "pole0") * k(s2, "pole0")
-    out["S S [a12]"] = half * (
-        k(s1, "pole0") * k(s2, "pole1") + k(s1, "pole1") * k(s2, "pole0")
-    )
-    out["S S [b2_pipi]"] = half * (
-        k(s1, "prod0") * k(s2, "pole1") + k(s2, "prod0") * k(s1, "pole1")
-    )
-    out["S S [c_pipi_pipi]"] = half * k(s1, "prod0") * k(s2, "prod0")
-    out["S S [c_pipi_KK]"] = half * (
-        k(s1, "prod0") * k(s2, "prod1") + k(s1, "prod1") * k(s2, "prod0")
-    )
-    f2 = _rbw(s1, RESONANCES["f2(1270)"][0], _two_body_width(s1, "f2(1270)", 2))
-    f2 *= _barrier(2, ls.q2(s1, M_PI**2, M_PI**2), R_RESONANCE)
-    ts = (
-        cov.contract_tensors(_t2(pd, r1, r2), _t2(r1, a, b))
-        * _barrier(2, q2d, R_D)
-        * f2
-    )
-    out["f2 S [f_pipi]"] = ts * k(s2, "prod0")
-    out["f2 S [f_KK]"] = ts * k(s2, "prod1")
+    s_a2 = blocks.spin(f"a2_{tag}", a2_spin)
+    s_pi = blocks.spin(f"piP_{tag}", lambda: cov.dot(t_a, t_iso) * b_a1)
+    triplet = (plus, minus, bach)
+    rho = blocks.rho(plus, minus)
+    other = "-" if charge == "+" else "+"
+    a1_swave = {k[2:]: v for k, v in A1_DECAYS.items() if k.startswith("S_")}
+    pi_swave = {k[2:]: v for k, v in PI1300_DECAYS.items() if k.startswith("S_")}
+    out = {
+        f"a1(1260){charge} pi{other}": (
+            rho_sign * (s_rho_s + A1_DECAYS["rho_D"] * s_rho_d) * rho
+            + A1_DECAYS["f2_P"] * s_f2 * blocks.f2(plus, minus)
+            + s_s * blocks.swave(plus, minus, a1_swave)
+        )
+        * blocks.propagator(triplet, "a1(1260)"),
+        f"a1(1640){charge} pi{other}": rho_sign
+        * s_rho_s
+        * rho
+        * blocks.propagator(triplet, "a1(1640)"),
+        f"a2(1320){charge} pi{other}": rho_sign
+        * s_a2
+        * rho
+        * blocks.propagator(triplet, "a2(1320)"),
+        f"pi(1300){charge} pi{other}": (
+            rho_sign * s_pi * rho + blocks.swave(plus, minus, pi_swave)
+        )
+        * blocks.propagator(triplet, "pi(1300)"),
+    }
+    if charge == "+":
+        out["a1(1420)+ pi-"] = (
+            s_s * blocks.f0(plus, minus) * blocks.propagator(triplet, "a1(1420)")
+        )
     return out
+
+
+def _two_body_terms(blocks: _Blocks, order) -> dict[str, sp.Expr]:  # ruff: ignore[too-many-locals]
+    """Chains with two pion pairs (a b)(c d), for one assignment of the pions."""
+    a, b, c, d = order
+    p = blocks.momentum
+    tag = f"{a}{b}{c}{d}"
+    pd, r1, r2 = p((0, 1, 2, 3)), p((a, b)), p((c, d))
+
+    def t_r(i, j):
+        return blocks.vector(
+            f"t{i}{j}", lambda: _t1(p((i, j)), blocks.p[i], blocks.p[j])
+        )
+
+    t_d = blocks.vector(f"tDD{tag}", lambda: _t1(pd, r1, r2))
+    t2_d = blocks.tensor(f"TDD{tag}", lambda: _t2(pd, r1, r2))
+    t2_r1 = blocks.tensor(f"T{a}{b}", lambda: _t2(r1, blocks.p[a], blocks.p[b]))
+    b_d1 = blocks.get(
+        f"BDD1_{tag}", lambda: _barrier(1, _q2(pd, r1, r2), R_D), real=True
+    )
+    b_d2 = blocks.get(
+        f"BDD2_{tag}", lambda: _barrier(2, _q2(pd, r1, r2), R_D), real=True
+    )
+    s_s = blocks.spin(f"VVS_{tag}", lambda: cov.dot(t_r(a, b), t_r(c, d)))
+    s_p = blocks.spin(
+        f"VVP_{tag}",
+        lambda: cov.levi_civita_contract(t_d, t_r(a, b), t_r(c, d), pd) * b_d1,
+    )
+    s_d = blocks.spin(
+        f"VVD_{tag}", lambda: cov.contract_lower(t2_d, t_r(a, b), t_r(c, d)) * b_d2
+    )
+    s_vs = blocks.spin(f"VS_{tag}", lambda: cov.dot(t_d, t_r(a, b)) * b_d1)
+    s_ts = blocks.spin(f"TS_{tag}", lambda: cov.contract_tensors(t2_d, t2_r1) * b_d2)
+    rho1, rho2, rho2h = (
+        blocks.rho(a, b),
+        blocks.rho(c, d),
+        blocks.rho(c, d, "rho(1450)"),
+    )
+
+    def k(i, j, term):
+        return blocks.kmatrix(i, j, term)
+
+    half = sp.Rational(1, 2)  # rho0 rho0 and S S: each pairing comes twice
+    return {
+        "rho rho [S]": half * s_s * rho1 * rho2,
+        "rho rho [P]": half * s_p * rho1 * rho2,
+        "rho rho [D]": half * s_d * rho1 * rho2,
+        "rho rho(1450) [P]": s_p * rho1 * rho2h,
+        "rho rho(1450) [D]": s_d * rho1 * rho2h,
+        "rho S [beta1]": s_vs * rho1 * k(c, d, "pole0"),
+        "rho S [f_pipi]": s_vs * rho1 * k(c, d, "prod0"),
+        "rho S [f_KK]": s_vs * rho1 * k(c, d, "prod1"),
+        "S S [a11]": k(a, b, "pole0") * k(c, d, "pole0"),
+        "S S [a12]": half
+        * (k(a, b, "pole0") * k(c, d, "pole1") + k(a, b, "pole1") * k(c, d, "pole0")),
+        "S S [b2_pipi]": half
+        * (k(a, b, "prod0") * k(c, d, "pole1") + k(c, d, "prod0") * k(a, b, "pole1")),
+        "S S [c_pipi_pipi]": half * k(a, b, "prod0") * k(c, d, "prod0"),
+        "S S [c_pipi_KK]": half
+        * (k(a, b, "prod0") * k(c, d, "prod1") + k(a, b, "prod1") * k(c, d, "prod0")),
+        "f2 S [f_pipi]": s_ts * blocks.f2(a, b) * k(c, d, "prod0"),
+        "f2 S [f_KK]": s_ts * blocks.f2(a, b) * k(c, d, "prod1"),
+    }
 
 
 def coupling_symbol(name: str) -> sp.Symbol:
     return sp.Symbol(f"C_{{{name}}}")
 
 
-def formulate_model() -> AmpGenModel:
-    r"""The BESIII :math:`D^0 \to \pi^+\pi^-\pi^+\pi^-` model, as an :class:`.AmpGenModel`.
+ORDERINGS = ((0, 1, 2, 3), (2, 1, 0, 3), (0, 3, 2, 1), (2, 3, 0, 1))
+
+
+def formulate_model() -> FourPionModel:
+    r"""The BESIII :math:`D^0 \to \pi^+\pi^-\pi^+\pi^-` model, as a :class:`FourPionModel`.
 
     ``chains`` holds one amplitude per :math:`D^0` coupling (the S-wave chains one per
-    production-vector coefficient), summed over the four exchanges of identical pions;
-    the coupling of ``a1(1260)+ pi-`` is fixed.
+    production-vector coefficient), summed over the four exchanges of identical pions
+    (:data:`ORDERINGS`: pi+ at positions 0 and 2, pi- at 1 and 3); the coupling of
+    ``a1(1260)+ pi-`` is fixed.
     """
     momenta = [[sp.Symbol(f"p{i}_{c}", real=True) for c in "xyzE"] for i in range(4)]
-    p = [list(row) for row in momenta]
-    orderings = [
-        (p[0], p[1], p[2], p[3]),
-        (p[2], p[1], p[0], p[3]),
-        (p[0], p[3], p[2], p[1]),
-        (p[2], p[3], p[0], p[1]),
-    ]
+    blocks = _Blocks([list(row) for row in momenta])
     chains: dict[str, sp.Expr] = {}
-    for order in orderings:
-        for name, expr in _chains_one_ordering(*order).items():
+    for order in ORDERINGS:
+        terms = _two_body_terms(blocks, order)
+        for charge in "+-":
+            terms.update(_three_body_terms(blocks, order, charge))
+        for name, expr in terms.items():
             chains[name] = chains.get(name, 0) + expr
+    chains = {n: chains[n] for n in COUPLINGS}
     couplings = {name: coupling_symbol(name) for name in chains}
     defaults: dict[sp.Symbol, Any] = {
         coupling_symbol(n): complex(v) for n, v in COUPLINGS.items()
     }
     free = [coupling_symbol(n) for n in COUPLINGS if n not in FIXED]
-    table = {
-        "D0": {"mass": M_D0},
-        "pi+": {"mass": M_PI},
-        "pi-": {"mass": M_PI},
-    }
-    return AmpGenModel(
-        chains, couplings, defaults, free, momenta, "D0", FINAL_STATE, table
+    table = {"D0": {"mass": M_D0}, "pi+": {"mass": M_PI}, "pi-": {"mass": M_PI}}
+    return FourPionModel(
+        chains,
+        couplings,
+        defaults,
+        free,
+        momenta,
+        "D0",
+        FINAL_STATE,
+        table,
+        stages=blocks.stages(),
     )
 
 
