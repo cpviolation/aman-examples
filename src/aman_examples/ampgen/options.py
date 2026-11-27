@@ -81,12 +81,12 @@ class Options:
     splines: dict = field(default_factory=dict)  # particle -> (n knots, min s, max s)
 
 
-def _resolve_expression(expr, values):
+def _resolve_expression(expr, values, pi=math.pi):
     expr = expr.strip()
     m = re.fullmatch(r"(\S+)\s*([+-])\s*(PI|[0-9.eE+-]+)", expr)
     if m:
-        base = _resolve_expression(m.group(1), values)
-        offset = math.pi if m.group(3) == "PI" else float(m.group(3))
+        base = _resolve_expression(m.group(1), values, pi)
+        offset = pi if m.group(3) == "PI" else float(m.group(3))
         return base + offset if m.group(2) == "+" else base - offset
     if expr in values:
         return values[expr]
@@ -100,20 +100,36 @@ N_TOKENS_COUPLING = (
 N_TOKENS_PARAMETER = 4  # name, flag, value, error
 
 
+def _lines(file_name):
+    """Lines of an options file, with ``Import`` lines replaced by the imported file.
+
+    ``Import $AMPGENROOT/options/<file>`` (AmpGen's own options directory) is read from
+    the directory of the importing file, other paths relative to it.
+    """
+    path = Path(file_name)
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line.startswith("Import "):
+            target = line.split(maxsplit=1)[1]
+            target = target.removeprefix("$AMPGENROOT/options/")
+            yield from _lines(path.parent / target)
+        elif line:
+            yield line
+
+
 def read_options(file_name):  # ruff: ignore[complex-structure, too-many-branches]
     """Read an AmpGen options file: event type, couplings and parameters.
 
     Coupling values are complex (polar or Cartesian according to
-    ``CouplingConstant::Coordinates``); flag 2 means fixed. Aliases ``A = B``
-    (optionally ``B +- number|PI``) are resolved, also for the real and imaginary (or
-    magnitude and phase) parts of couplings via ``_Re``/``_Im``.
+    ``CouplingConstant::Coordinates``, phases in radians or, with
+    ``CouplingConstant::AngularUnits deg``, degrees); flag 2 means fixed. Aliases ``A =
+    B`` (optionally ``B +- number|PI``) are resolved, also for the real and imaginary
+    (or magnitude and phase) parts of couplings via ``_Re``/``_Im``. ``Import`` lines
+    include another options file; later definitions override earlier ones.
     """
-    event_type, polar = None, False
+    event_type, polar, degrees = None, False, False
     raw_couplings, raw_params, aliases, ignored, splines = {}, {}, [], [], {}
-    for raw_line in Path(file_name).read_text().splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if not line:
-            continue
+    for line in _lines(file_name):
         if "=" in line:
             lhs, rhs = (x.strip() for x in line.split("=", 1))
             aliases.append((lhs, rhs))
@@ -124,6 +140,8 @@ def read_options(file_name):  # ruff: ignore[complex-structure, too-many-branche
             event_type = tokens[1:]
         elif key == "CouplingConstant::Coordinates":
             polar = tokens[1] == "polar"
+        elif key == "CouplingConstant::AngularUnits":
+            degrees = tokens[1] == "deg"
         elif key.endswith("::Spline") and len(tokens) == N_TOKENS_PARAMETER:
             splines[key[: -len("::Spline")]] = (
                 int(tokens[1]),
@@ -145,7 +163,7 @@ def read_options(file_name):  # ruff: ignore[complex-structure, too-many-branche
     for k, (re_, im_, _) in raw_couplings.items():
         values[k + "_Re"], values[k + "_Im"] = re_, im_
     for lhs, rhs in aliases:  # in file order
-        values[lhs] = _resolve_expression(rhs, values)
+        values[lhs] = _resolve_expression(rhs, values, 180.0 if degrees else math.pi)
         if lhs.endswith(("_Re", "_Im")):
             name = lhs[:-3]
             re_, im_ = values.get(name + "_Re"), values.get(name + "_Im")
@@ -156,6 +174,9 @@ def read_options(file_name):  # ruff: ignore[complex-structure, too-many-branche
 
     couplings = {}
     for name, (a, b, free) in raw_couplings.items():
-        couplings[name] = (cmath.rect(a, b) if polar else complex(a, b), free)
+        if polar:
+            couplings[name] = (cmath.rect(a, math.radians(b) if degrees else b), free)
+        else:
+            couplings[name] = (complex(a, b), free)
     params = {k: (values[k], free) for k, (_, free) in raw_params.items()}
     return Options(event_type, couplings, params, ignored, splines)

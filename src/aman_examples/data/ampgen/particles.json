@@ -359,5 +359,104 @@
   "radius": 1.5,
   "two_spin": 2,
   "width": 9900000.0
+ },
+ "K(1460)+": {
+  "charge": 1,
+  "mass": 1.46,
+  "parity": -1,
+  "pdg_id": 100321,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 0.26
+ },
+ "K(1460)bar-": {
+  "charge": -1,
+  "mass": 1.46,
+  "parity": -1,
+  "pdg_id": -100321,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 0.26
+ },
+ "K(2)*(1430)+": {
+  "charge": 1,
+  "mass": 1.4256,
+  "parity": 1,
+  "pdg_id": 325,
+  "radius": 1.5,
+  "two_spin": 4,
+  "width": 0.0985
+ },
+ "K(2)*(1430)bar-": {
+  "charge": -1,
+  "mass": 1.4256,
+  "parity": 1,
+  "pdg_id": -325,
+  "radius": 1.5,
+  "two_spin": 4,
+  "width": 0.0985
+ },
+ "KPi0bar0": {
+  "charge": 0,
+  "mass": 9.98,
+  "parity": 1,
+  "pdg_id": -998110,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 9900000.0
+ },
+ "KPi1bar0": {
+  "charge": 0,
+  "mass": 9.98,
+  "parity": 1,
+  "pdg_id": -998111,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 9900000.0
+ },
+ "KPi20": {
+  "charge": 0,
+  "mass": 9.98,
+  "parity": 1,
+  "pdg_id": 998112,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 9900000.0
+ },
+ "KPi2bar0": {
+  "charge": 0,
+  "mass": 9.98,
+  "parity": 1,
+  "pdg_id": -998112,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 9900000.0
+ },
+ "PiPi10": {
+  "charge": 0,
+  "mass": 9.97,
+  "parity": 1,
+  "pdg_id": 998101,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 9900000.0
+ },
+ "PiPi30": {
+  "charge": 0,
+  "mass": 9.97,
+  "parity": 1,
+  "pdg_id": 998103,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 9900000.0
+ },
+ "PiPi40": {
+  "charge": 0,
+  "mass": 9.97,
+  "parity": 1,
+  "pdg_id": 998104,
+  "radius": 1.5,
+  "two_spin": 0,
+  "width": 9900000.0
  }
 }
