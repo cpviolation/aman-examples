@@ -23,6 +23,7 @@ raises `NotImplementedError`.
 from __future__ import annotations
 
 import functools
+import itertools
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -80,7 +81,15 @@ class Particle:
     """A node of an expanded decay chain, with AmpGen's ordering and orbital rules."""
 
     def __init__(
-        self, decay, table, params, final_state, *, is_head=False, splines=None
+        self,
+        decay,
+        table,
+        params,
+        final_state,
+        *,
+        is_head=False,
+        splines=None,
+        slots=None,
     ):
         self.name = decay.name
         self.modifiers = list(decay.modifiers)
@@ -95,11 +104,15 @@ class Particle:
         self.radius = params.get(self.name + "_radius", props["radius"])
         self.is_head = is_head
         self.table, self.params, self.splines = table, params, splines or {}
+        if slots is None:  # event positions of each final-state particle, in order
+            slots = {
+                n: [i for i, f in enumerate(final_state) if f == n] for n in final_state
+            }
         self.daughters = [
-            Particle(d, table, params, final_state, splines=splines)
+            Particle(d, table, params, final_state, splines=splines, slots=slots)
             for d in decay.daughters
         ]
-        self.index = final_state.index(self.name) if not self.daughters else None
+        self.index = slots[self.name].pop(0) if not self.daughters else None
         self._sort_daughters()
         self.L = self._orbital()
 
@@ -437,20 +450,37 @@ def _expand(
     return combos
 
 
+def _identical_orderings(final_state: list[str], p: list) -> list[list]:
+    """The momenta ``p`` permuted in all ways that exchange identical particles."""
+    return [
+        [p[j] for j in permutation]
+        for permutation in itertools.permutations(range(len(final_state)))
+        if all(final_state[i] == final_state[j] for i, j in enumerate(permutation))
+    ]
+
+
 def formulate_ampgen_model(  # ruff: ignore[too-many-locals]
-    options_file: str | Path, particles_file: str | Path
+    options_file: str | Path,
+    particles_file: str | Path,
+    event_type: Sequence[str] | None = None,
 ) -> AmpGenModel:
     """Build the SymPy model of an AmpGen options file.
+
+    As in AmpGen, each chain is symmetrised over identical final-state particles: the
+    sum over their exchanges, divided by the square root of the number of exchanges.
 
     Args:
         options_file: The AmpGen options file.
 
         particles_file: Particle properties (JSON, as dumped from AmpGen's particle
             table).
+
+        event_type: Head and final-state particles, if not given by the ``EventType``
+            of the options file.
     """
     options = read_options(options_file)
     table = load_particles(particles_file)
-    head, *final_state = options.event_type
+    head, *final_state = event_type or options.event_type
     params = {k: v for k, (v, _) in options.parameters.items()}
     symbols = Symbols(table, params)
     momenta = [
@@ -458,6 +488,7 @@ def formulate_ampgen_model(  # ruff: ignore[too-many-locals]
         for i in range(len(final_state))
     ]
     p = [list(row) for row in momenta]
+    orderings = _identical_orderings(final_state, p)
 
     descriptors = {rule: parse_descriptor(rule) for rule in options.couplings}
 
@@ -484,7 +515,9 @@ def formulate_ampgen_model(  # ruff: ignore[too-many-locals]
             if name in chains:
                 msg = f"Duplicate decay chain {name}"
                 raise ValueError(msg)
-            chains[name] = particle.amplitude(p, symbols)
+            chains[name] = sp.Add(
+                *(particle.amplitude(q, symbols) for q in orderings)
+            ) / sp.sqrt(len(orderings))
             trees[name] = particle
             couplings[name] = sp.Mul(*(coupling_symbol(r) for r in [rule, *used]))
     if not chains:

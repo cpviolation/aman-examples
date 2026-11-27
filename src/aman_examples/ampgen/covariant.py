@@ -164,6 +164,20 @@ def V_VS_D(P: Vector, Q: Vector, V1: Vector, V2: sp.Expr) -> Vector:
     return [sum(s[m][n] * l2_v1[n] for n in INDICES) * V2 for m in INDICES]
 
 
+def T_VS_D(P: Vector, Q: Vector, V1: Vector, V2: sp.Expr) -> Tensor:
+    r""":math:`-\frac{1}{2}(G_\mu L_\nu + L_\mu G_\nu)`, :math:`G_\mu = \epsilon_{\mu\nu\alpha\beta} P^\nu Q^\alpha V_1^\beta`.
+
+    AmpGen contracts the lower indices of :math:`\epsilon` with the vectors using the
+    metric, and stores the free index of :math:`G` as it is; so its components are
+    :math:`g^{\mu\mu} G_\mu`, combined with the upper-index P-wave :math:`L`.
+    """
+    g = [0] * len(INDICES)
+    for (i, j, k, m), sign in LEVI_CIVITA_LOWER.items():
+        g[i] += METRIC[i] * sign * P[j] * Q[k] * V1[m]
+    l1 = orbital_pwave(P, Q)
+    return [[-(g[i] * l1[j] + l1[i] * g[j]) * V2 / 2 for j in INDICES] for i in INDICES]
+
+
 VERTICES: dict[str, Callable] = {
     "S_SS_S": S_SS_S,
     "S_TS_D": S_TS_D,
@@ -173,6 +187,7 @@ VERTICES: dict[str, Callable] = {
     "S_VV_P": S_VV_P,
     "S_VV_S": S_VV_S,
     "T_SS_D": T_SS_D,
+    "T_VS_D": T_VS_D,
     "V_SS_P": V_SS_P,
     "V_VS_D": V_VS_D,
     "V_VS_S": V_VS_S,
