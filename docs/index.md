@@ -15,5 +15,7 @@ mixing
 mixing-cpv
 acceptance
 d02kkpipi
+d02k3pi
+d024pi
 api
 ```

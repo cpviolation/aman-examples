@@ -10,6 +10,8 @@
 .. automodule:: aman_examples.binflip
 .. automodule:: aman_examples.estimator
 .. automodule:: aman_examples.d02kkpipi
+.. automodule:: aman_examples.d02k3pi
+.. automodule:: aman_examples.d024pi
 .. automodule:: aman_examples.ampgen.model
 .. automodule:: aman_examples.ampgen.covariant
 .. automodule:: aman_examples.ampgen.lineshapes
